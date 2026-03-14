@@ -50,7 +50,10 @@ export function registerIpcHandlers(win: BrowserWindow) {
     }
   })
 
-  // === OLLAMA BRIDGE ===
+  // === GEMINI BRIDGE ===
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
+  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
+
   ipcMain.handle('send-to-ollama', async (_event, payload) => {
     try {
       const {
@@ -63,30 +66,52 @@ export function registerIpcHandlers(win: BrowserWindow) {
 
       const systemPrompt = buildSystemPrompt(triggerType, ocrText, syllabusContext)
 
-      const messages: Array<{ role: string; content: string }> = [
-        { role: 'system', content: systemPrompt },
-        ...conversationHistory,
-      ]
+      // Convert conversation history — Gemini uses "model" not "assistant"
+      // Also merge consecutive same-role turns (Gemini requires strict alternation)
+      const rawContents = conversationHistory.map((m: { role: string; content: string }) => ({
+        role: m.role === 'assistant' ? 'model' : 'user',
+        text: m.content,
+      }))
 
       if (userQuestion) {
-        messages.push({ role: 'user', content: userQuestion })
+        rawContents.push({ role: 'user', text: userQuestion })
+      }
+
+      // Gemini requires at least one user turn ending the contents array
+      if (rawContents.length === 0 || rawContents[rawContents.length - 1].role !== 'user') {
+        rawContents.push({ role: 'user', text: 'What should I know right now?' })
+      }
+
+      // Merge consecutive same-role messages so Gemini doesn't reject
+      const contents: Array<{ role: string; parts: Array<{ text: string }> }> = []
+      for (const msg of rawContents) {
+        const last = contents[contents.length - 1]
+        if (last && last.role === msg.role) {
+          last.parts[0].text += '\n' + msg.text
+        } else {
+          contents.push({ role: msg.role, parts: [{ text: msg.text }] })
+        }
+      }
+
+      // Gemini contents must start with a user turn
+      if (contents.length > 0 && contents[0].role !== 'user') {
+        contents.unshift({ role: 'user', parts: [{ text: '(context)' }] })
       }
 
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 30000)
 
-      const response = await fetch('http://localhost:11434/api/chat', {
+      const response = await fetch(GEMINI_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          model: 'llama3.2:3b',
-          messages,
-          stream: false,
-          options: {
+          system_instruction: { parts: [{ text: systemPrompt }] },
+          contents,
+          generationConfig: {
             temperature: 0.7,
-            num_predict: 200,
-            top_p: 0.9,
+            maxOutputTokens: 200,
+            topP: 0.9,
           },
         }),
       })
@@ -94,18 +119,30 @@ export function registerIpcHandlers(win: BrowserWindow) {
       clearTimeout(timeout)
       const data = await response.json()
 
+      if (data.error) {
+        console.error('[Gemini] API error:', data.error.message || JSON.stringify(data.error))
+        return {
+          success: false,
+          message: `Gemini error: ${data.error.message || 'Unknown error'}`,
+        }
+      }
+
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      if (!text) {
+        console.warn('[Gemini] No text in response:', JSON.stringify(data).substring(0, 500))
+      }
       return {
         success: true,
-        message: data.message?.content || "I couldn't generate a response.",
+        message: text || "I couldn't generate a response.",
       }
     } catch (error: any) {
-      console.error('[IPC] send-to-ollama failed:', error)
+      console.error('[IPC] send-to-gemini failed:', error)
       const isTimeout = error?.name === 'AbortError'
       return {
         success: false,
         message: isTimeout
           ? "I'm taking too long to think. Try a simpler question!"
-          : "I'm having trouble connecting. Is Ollama running? (ollama serve)",
+          : "I'm having trouble connecting to Gemini. Check your internet connection.",
         error: String(error),
       }
     }

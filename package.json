@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "active-win": "^8.1.0",
+    "dotenv": "^17.3.1",
     "electron-store": "^8.1.0",
     "framer-motion": "^11.0.0",
     "lottie-react": "^2.4.0",

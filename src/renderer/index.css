@@ -60,6 +60,20 @@ body,
   border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
+/* Button background helpers (Tailwind 3 doesn't generate /8 or /12 opacity by default) */
+.bg-white\/8 {
+  background-color: rgba(255, 255, 255, 0.08);
+}
+.hover\:bg-white\/12:hover {
+  background-color: rgba(255, 255, 255, 0.12);
+}
+.hover\:bg-red-500\/15:hover {
+  background-color: rgba(239, 68, 68, 0.15);
+}
+.hover\:bg-purple-500\/15:hover {
+  background-color: rgba(139, 92, 246, 0.15);
+}
+
 /* Gaze cursor dot — follows eye position on screen */
 .gaze-cursor {
   position: fixed;

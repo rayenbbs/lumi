@@ -1,27 +1,12 @@
+import { config as loadEnv } from 'dotenv'
 import { app, BrowserWindow, screen, shell } from 'electron'
 import path from 'path'
 import { registerIpcHandlers } from './ipc-handlers'
 
+loadEnv()
+
 export let mainWindow: BrowserWindow | null = null
 
-// Warm up Ollama on app start
-async function warmUpOllama() {
-  try {
-    await fetch('http://localhost:11434/api/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: 'llama3.2:3b',
-        messages: [{ role: 'user', content: 'hi' }],
-        stream: false,
-        options: { num_predict: 5 },
-      }),
-    })
-    console.log('[Lumi] Ollama warmed up')
-  } catch {
-    console.warn('[Lumi] Ollama not available — will retry on first request')
-  }
-}
 
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
@@ -74,7 +59,6 @@ function createWindow() {
 
 app.whenReady().then(() => {
   createWindow()
-  warmUpOllama()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

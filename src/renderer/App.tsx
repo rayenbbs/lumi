@@ -169,19 +169,9 @@ export default function App() {
     return () => clearTimeout(t)
   }, [messages, lastOCRText, sessionStats, focusScore])
 
-  // Check Ollama health
+  // Mark AI as online (Gemini — no local server needed)
   useEffect(() => {
-    const checkOllama = async () => {
-      try {
-        const res = await fetch('http://localhost:11434/api/tags')
-        setOllamaStatus(res.ok ? 'online' : 'offline')
-      } catch {
-        setOllamaStatus('offline')
-      }
-    }
-    checkOllama()
-    const interval = setInterval(checkOllama, 30_000)
-    return () => clearInterval(interval)
+    setOllamaStatus('online')
   }, [setOllamaStatus])
 
   // Initialize services on mount
@@ -512,8 +502,10 @@ export default function App() {
   }
 
   // ─── RENDER ───────────────────────────────────────────────────────────────
+  const isActive = lumiState !== 'sleeping'
+
   return (
-    <div className="w-full h-full relative select-none overflow-hidden">
+    <div className="w-full h-full relative select-none overflow-hidden flex flex-col">
 
       {/* Calibration overlay */}
       <AnimatePresence>
@@ -551,89 +543,121 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* ── TOP BAR: status indicators + controls ── */}
-      <div className="absolute top-2 left-3 right-3 flex items-center justify-between z-10">
-        {/* Drag handle */}
-        <div className="drag-region flex-1 h-6 cursor-move" />
+      {/* ── BACKGROUND PANEL (visible when session is active) ── */}
+      <AnimatePresence>
+        {isActive && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.3 }}
+            className="absolute inset-0 rounded-2xl glass pointer-events-none z-0"
+          />
+        )}
+      </AnimatePresence>
 
-        {/* Right: status + controls */}
-        <div className="flex items-center gap-3 no-drag">
+      {/* ── TOP BAR ── */}
+      <div className="relative z-10 flex items-center px-3 pt-2 pb-1">
+        {/* Drag handle (left side) */}
+        <div className="drag-region flex-1 h-8 cursor-move" />
+
+        {/* Status dots */}
+        <div className="flex items-center gap-2 no-drag mr-1">
           <OllamaIndicator status={ollamaStatus} />
           <EyeIndicator status={eyeStatus} />
           <MicIndicator status={micStatus} />
-
-          {lumiState !== 'sleeping' && (
-            <>
-              {/* Bionic reader toggle */}
-              <button
-                onClick={() => setShowBionicReader(!showBionicReader)}
-                className="text-[10px] text-white/40 hover:text-white/70 transition-colors px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10"
-                title="Bionic Reading Mode"
-              >
-                Aa
-              </button>
-
-              {/* Keyboard input toggle */}
-              <button
-                onClick={() => setShowInput(!showInput)}
-                className="text-[10px] text-white/40 hover:text-white/70 transition-colors px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10"
-                title="Type a question"
-              >
-                ⌨️
-              </button>
-
-              {/* End session */}
-              <button
-                onClick={stopSession}
-                className="text-[10px] text-white/40 hover:text-red-400 transition-colors px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10"
-                title="End session"
-              >
-                ⏹
-              </button>
-            </>
-          )}
         </div>
       </div>
 
-      {/* ── CHAT MESSAGES ── */}
+      {/* ── ACTION BUTTONS (below top bar, only when session active) ── */}
       <AnimatePresence>
-        {isExpanded && messages.length > 0 && (
+        {isActive && (
           <motion.div
-            key="chat-panel"
-            initial={{ opacity: 0, y: 15 }}
+            initial={{ opacity: 0, y: -6 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 15 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-            className="absolute bottom-[160px] left-3 right-3 max-h-[280px] overflow-y-auto flex flex-col gap-2 no-drag"
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
+            className="relative z-10 flex items-center justify-center gap-2 px-3 pb-2 no-drag"
           >
-            {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
-              <ChatBubble key={msg.id} message={msg} />
-            ))}
+            <button
+              onClick={() => setShowInput(!showInput)}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+                showInput
+                  ? 'bg-purple-500/30 text-purple-300 border border-purple-400/30'
+                  : 'bg-white/8 text-white/50 hover:text-white/80 hover:bg-white/12 border border-white/10'
+              }`}
+              title="Type a question"
+            >
+              <span className="text-sm">⌨</span> Ask
+            </button>
 
-            {isThinking && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                className="self-start glass-light rounded-2xl rounded-tl-sm px-4 py-2.5"
-              >
-                <div className="flex gap-1 items-center">
-                  {[0, 1, 2].map((i) => (
-                    <motion.div
-                      key={i}
-                      className="w-1.5 h-1.5 bg-purple-400 rounded-full"
-                      animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
-                      transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
-                    />
-                  ))}
-                  <span className="text-white/50 text-xs ml-1">Lumi is thinking...</span>
-                </div>
-              </motion.div>
-            )}
+            <button
+              onClick={() => setShowBionicReader(!showBionicReader)}
+              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+                showBionicReader
+                  ? 'bg-purple-500/30 text-purple-300 border border-purple-400/30'
+                  : 'bg-white/8 text-white/50 hover:text-white/80 hover:bg-white/12 border border-white/10'
+              }`}
+              title="Bionic Reading Mode"
+            >
+              <span className="text-sm font-bold">Aa</span> Read
+            </button>
 
-            <div ref={messagesEndRef} />
+            <button
+              onClick={stopSession}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/8 text-white/50 hover:text-red-400 hover:bg-red-500/15 hover:border-red-400/30 border border-white/10 transition-all"
+              title="End session"
+            >
+              <span className="text-sm">⏹</span> End
+            </button>
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── CHAT MESSAGES ── */}
+      <div className="flex-1 relative z-10 min-h-0">
+        <AnimatePresence>
+          {isExpanded && messages.length > 0 && (
+            <motion.div
+              key="chat-panel"
+              initial={{ opacity: 0, y: 15 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: 15 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+              className="absolute inset-x-3 bottom-0 top-0 overflow-y-auto flex flex-col gap-2 no-drag"
+            >
+              {/* Spacer pushes messages to bottom */}
+              <div className="flex-1" />
+
+              {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
+                <ChatBubble key={msg.id} message={msg} />
+              ))}
+
+              {isThinking && (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  className="self-start glass-light rounded-2xl rounded-tl-sm px-4 py-2.5"
+                >
+                  <div className="flex gap-1 items-center">
+                    {[0, 1, 2].map((i) => (
+                      <motion.div
+                        key={i}
+                        className="w-1.5 h-1.5 bg-purple-400 rounded-full"
+                        animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                        transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                      />
+                    ))}
+                    <span className="text-white/50 text-xs ml-1">Lumi is thinking...</span>
+                  </div>
+                </motion.div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
 
       {/* ── TEXT INPUT ── */}
       <AnimatePresence>
@@ -642,7 +666,7 @@ export default function App() {
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: 10 }}
-            className="absolute bottom-[155px] left-3 right-3 no-drag"
+            className="relative z-10 px-3 pb-2 no-drag"
           >
             <form onSubmit={handleInputSubmit} className="flex gap-2">
               <input
@@ -651,11 +675,11 @@ export default function App() {
                 onChange={(e) => setInputText(e.target.value)}
                 placeholder="Ask Lumi anything..."
                 autoFocus
-                className="flex-1 glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/50 bg-transparent"
+                className="flex-1 glass rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
               />
               <button
                 type="submit"
-                className="glass rounded-xl px-3 py-2 text-purple-400 hover:text-purple-300 transition-colors text-sm"
+                className="glass rounded-xl px-4 py-2.5 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
               >
                 ↑
               </button>
@@ -673,7 +697,7 @@ export default function App() {
       )}
 
       {/* ── LUMI CHARACTER + LABEL ── */}
-      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">
+      <div className="relative z-10 flex flex-col items-center gap-1 pb-3 pt-1">
         <LumiCharacter
           state={lumiState}
           isThinking={isThinking}
