@@ -29,4 +29,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Session persistence
   saveSession: (data: any) => ipcRenderer.invoke('save-session', data),
   loadSession: () => ipcRenderer.invoke('load-session'),
+
+  // Drag & drop zone
+  startDrag: (mouseX: number, mouseY: number) => ipcRenderer.invoke('start-drag', mouseX, mouseY),
+  stopDrag: () => ipcRenderer.invoke('stop-drag') as Promise<{ closed: boolean }>,
 })

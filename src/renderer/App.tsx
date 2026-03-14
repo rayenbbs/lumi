@@ -33,6 +33,8 @@ declare global {
       resizeWindow: (w: number, h: number) => Promise<void>
       saveSession: (data: any) => Promise<boolean>
       loadSession: () => Promise<any>
+      startDrag: (mouseX: number, mouseY: number) => Promise<any>
+      stopDrag: () => Promise<{ closed: boolean }>
     }
   }
 }
@@ -58,6 +60,7 @@ export default function App() {
   const [inputText, setInputText] = useState('')
   const [showInput, setShowInput] = useState(false)
   const [gazePosition, setGazePosition] = useState<{ x: number; y: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Service refs (stable across renders)
@@ -490,6 +493,26 @@ export default function App() {
     }
   }, [lumiState, isExpanded, startSession, setIsExpanded])
 
+  // ─── DRAG TO CLOSE ──────────────────────────────────────────────────────
+  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    if (!window.electronAPI) return
+    e.preventDefault()
+
+    // Tell main process to start drag — it polls the cursor position directly
+    await window.electronAPI.startDrag(e.screenX, e.screenY)
+    setIsDragging(true)
+
+    const handleMouseUp = async () => {
+      document.removeEventListener('mouseup', handleMouseUp)
+      setIsDragging(false)
+      // Tell main process to stop — it checks overlap and closes if needed
+      await window.electronAPI.stopDrag()
+    }
+
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
   function playSound(name: string) {
     try {
       const audio = new Audio(`/sounds/${name}.mp3`)
@@ -531,7 +554,7 @@ export default function App() {
       {isActive && <div className="lumi-bg-panel absolute inset-0 rounded-2xl z-0" />}
 
       {/* ── DRAG HANDLE (invisible, top strip) ── */}
-      <div className="drag-region h-6 shrink-0 z-10" />
+      <div className="h-6 shrink-0 z-10 cursor-grab active:cursor-grabbing" onMouseDown={handleDragStart} />
 
       {/* ── TOP ROW: status dots + action buttons ── */}
       <div className="no-drag relative z-30 px-3 pb-2 flex items-center justify-between shrink-0">
@@ -638,13 +661,28 @@ export default function App() {
         </div>
       )}
 
+      {/* ── DRAG INDICATOR ── */}
+      <AnimatePresence>
+        {isDragging && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 pointer-events-none rounded-2xl border-2 border-purple-400/40"
+          />
+        )}
+      </AnimatePresence>
+
       {/* ── GAZE DOT ── */}
       {eyeStatus === 'active' && gazePosition && (
         <div className="gaze-cursor" style={{ left: gazePosition.x, top: gazePosition.y }} />
       )}
 
       {/* ── LUMI CHARACTER + LABEL ── */}
-      <div className="no-drag relative z-20 flex flex-col items-center gap-1 pb-3 pt-1 shrink-0">
+      <div
+        className="relative z-20 flex flex-col items-center gap-1 pb-3 pt-1 shrink-0 cursor-grab active:cursor-grabbing"
+        onMouseDown={handleDragStart}
+      >
         <LumiCharacter
           state={lumiState}
           isThinking={isThinking}

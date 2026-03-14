@@ -1,6 +1,8 @@
-import { ipcMain, BrowserWindow, desktopCapturer } from 'electron'
+import { ipcMain, BrowserWindow, desktopCapturer, screen } from 'electron'
 import { mainWindow } from './main'
 import Store from 'electron-store'
+
+let dropZoneWindow: BrowserWindow | null = null
 
 let activeWinModule: any = null
 
@@ -172,6 +174,146 @@ export function registerIpcHandlers(win: BrowserWindow) {
 
   ipcMain.handle('resize-window', (_event, width: number, height: number) => {
     win.setSize(width, height, true)
+  })
+
+  // === DRAG & DROP ZONE ===
+  ipcMain.handle('get-window-position', () => {
+    const [x, y] = win.getPosition()
+    return { x, y }
+  })
+
+  ipcMain.handle('close-app', () => {
+    if (dropZoneWindow) {
+      dropZoneWindow.destroy()
+      dropZoneWindow = null
+    }
+    win.close()
+  })
+
+  // Start dragging: show drop zone, begin moving window with mouse via screen cursor polling
+  let dragInterval: ReturnType<typeof setInterval> | null = null
+
+  ipcMain.handle('start-drag', (_event, mouseX: number, mouseY: number) => {
+    const [winX, winY] = win.getPosition()
+    const offsetX = mouseX - winX
+    const offsetY = mouseY - winY
+
+    // Show drop zone
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize
+    const zoneW = 120
+    const zoneH = 120
+    const zoneX = Math.round(width / 2 - zoneW / 2)
+    const zoneY = height - zoneH - 20
+
+    if (!dropZoneWindow) {
+      dropZoneWindow = new BrowserWindow({
+        x: zoneX,
+        y: zoneY,
+        width: zoneW,
+        height: zoneH,
+        transparent: true,
+        frame: false,
+        alwaysOnTop: true,
+        skipTaskbar: true,
+        resizable: false,
+        focusable: false,
+        hasShadow: false,
+        webPreferences: { contextIsolation: true, nodeIntegration: false },
+      })
+
+      dropZoneWindow.setIgnoreMouseEvents(true)
+
+      const html = `
+        <html>
+        <body style="margin:0;background:transparent;display:flex;align-items:center;justify-content:center;height:100vh;">
+          <div id="bucket" style="
+            width:90px;height:90px;border-radius:50%;
+            background:rgba(239,68,68,0.15);
+            border:2px dashed rgba(239,68,68,0.6);
+            display:flex;align-items:center;justify-content:center;
+            transition:all 0.2s ease;
+          ">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="rgba(239,68,68,0.8)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="3 6 5 6 21 6"/>
+              <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+              <line x1="10" y1="11" x2="10" y2="17"/>
+              <line x1="14" y1="11" x2="14" y2="17"/>
+            </svg>
+          </div>
+        </body>
+        </html>
+      `
+      dropZoneWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`)
+      dropZoneWindow.on('closed', () => { dropZoneWindow = null })
+    }
+
+    // Use cursor polling from main process — this works even when cursor is outside the window
+    let wasOverDropZone = false
+
+    if (dragInterval) clearInterval(dragInterval)
+    dragInterval = setInterval(() => {
+      const cursor = screen.getCursorScreenPoint()
+      const newX = cursor.x - offsetX
+      const newY = cursor.y - offsetY
+      win.setPosition(Math.round(newX), Math.round(newY), false)
+
+      // Check if cursor is near the drop zone (generous 80px padding)
+      const pad = 80
+      const isOver =
+        cursor.x > zoneX - pad &&
+        cursor.x < zoneX + zoneW + pad &&
+        cursor.y > zoneY - pad &&
+        cursor.y < zoneY + zoneH + pad
+
+      if (isOver !== wasOverDropZone) {
+        wasOverDropZone = isOver
+        if (dropZoneWindow) {
+          dropZoneWindow.webContents.executeJavaScript(`
+            document.getElementById('bucket').style.background = ${isOver}
+              ? 'rgba(239,68,68,0.35)'
+              : 'rgba(239,68,68,0.15)';
+            document.getElementById('bucket').style.transform = ${isOver}
+              ? 'scale(1.15)'
+              : 'scale(1)';
+          `).catch(() => {})
+        }
+      }
+    }, 16) // ~60fps
+
+    return { zoneX, zoneY, zoneW, zoneH }
+  })
+
+  ipcMain.handle('stop-drag', () => {
+    if (dragInterval) {
+      clearInterval(dragInterval)
+      dragInterval = null
+    }
+
+    // Check if window is over the drop zone
+    const cursor = screen.getCursorScreenPoint()
+    const { width, height } = screen.getPrimaryDisplay().workAreaSize
+    const zoneW = 120
+    const zoneH = 120
+    const zoneX = Math.round(width / 2 - zoneW / 2)
+    const zoneY = height - zoneH - 20
+    const pad = 80
+
+    const isOver =
+      cursor.x > zoneX - pad &&
+      cursor.x < zoneX + zoneW + pad &&
+      cursor.y > zoneY - pad &&
+      cursor.y < zoneY + zoneH + pad
+
+    if (dropZoneWindow) {
+      dropZoneWindow.destroy()
+      dropZoneWindow = null
+    }
+
+    if (isOver) {
+      win.close()
+    }
+
+    return { closed: isOver }
   })
 
   // === SESSION PERSISTENCE ===
