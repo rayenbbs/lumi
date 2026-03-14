@@ -4,6 +4,7 @@ import threading
 import asyncio
 import websockets
 import json
+import os
 
 import cv2
 import mediapipe as mp
@@ -15,6 +16,12 @@ from parser import get_args
 from pose_estimation import HeadPoseEstimator as HeadPoseEst
 from utils import get_landmarks, load_camera_parameters
 
+# New MediaPipe Tasks API
+BaseOptions = mp.tasks.BaseOptions
+FaceLandmarker = mp.tasks.vision.FaceLandmarker
+FaceLandmarkerOptions = mp.tasks.vision.FaceLandmarkerOptions
+VisionRunningMode = mp.tasks.vision.RunningMode
+
 current_state = {
     "tired": False,
     "asleep": False,
@@ -23,7 +30,8 @@ current_state = {
     "ear": 0.0,
     "perclos": 0.0,
     "gaze": 0.0,
-    "roll": 0.0, "pitch": 0.0, "yaw": 0.0
+    "roll": 0.0, "pitch": 0.0, "yaw": 0.0,
+    "blink_rate": 0
 }
 
 async def ws_handler(websocket):
@@ -72,16 +80,19 @@ def main():
         pprint.pp(dist_coeffs, indent=4)
         print("\n")
 
-    """instantiation of mediapipe face mesh model. This model give back 478 landmarks
-    if the rifine_landmarks parameter is set to True. 468 landmarks for the face and
-    the last 10 landmarks for the irises
-    """
-    Detector = mp.solutions.face_mesh.FaceMesh(
-        static_image_mode=False,
-        min_detection_confidence=0.5,
+    # New MediaPipe Tasks API — FaceLandmarker replaces the legacy FaceMesh
+    model_path = os.path.join(os.path.dirname(__file__), 'face_landmarker.task')
+    options = FaceLandmarkerOptions(
+        base_options=BaseOptions(model_asset_path=model_path),
+        running_mode=VisionRunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
         min_tracking_confidence=0.5,
-        refine_landmarks=True,
+        output_face_blendshapes=False,
+        output_facial_transformation_matrixes=False,
     )
+    Detector = FaceLandmarker.create_from_options(options)
 
     # instantiation of the Eye Detector and Head Pose estimator objects
     Eye_det = EyeDet(show_processing=args.show_eye_proc)
@@ -144,23 +155,25 @@ def main():
         # start the tick counter for computing the processing time for each frame
         e1 = cv2.getTickCount()
 
-        # transform the BGR frame in grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-
         # get the frame size
         frame_size = frame.shape[1], frame.shape[0]
 
-        # apply a bilateral filter to lower noise but keep frame details. create a 3D matrix from gray image to give it to the model
-        # gray = cv2.bilateralFilter(gray, 5, 10, 10)
+        # convert BGR to RGB for MediaPipe
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
+
+        # also prepare grayscale 3-channel for gaze scoring
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         gray = np.expand_dims(gray, axis=2)
         gray = np.concatenate([gray, gray, gray], axis=2)
 
-        # find the faces using the face mesh model
-        lms = Detector.process(gray).multi_face_landmarks
+        # detect face landmarks using the new Tasks API
+        timestamp_ms = int(t_now * 1000)
+        result = Detector.detect_for_video(mp_image, timestamp_ms)
 
-        if lms:  # process the frame only if at least a face is found
-            # getting face landmarks and then take only the bounding box of the biggest face
-            landmarks = get_landmarks(lms)
+        if result.face_landmarks:  # process the frame only if at least a face is found
+            # convert new API landmarks to numpy array matching old format
+            landmarks = get_landmarks(result.face_landmarks)
 
             # shows the eye keypoints (can be commented)
             Eye_det.show_eye_keypoints(
@@ -204,7 +217,8 @@ def main():
                 "gaze": float(gaze) if gaze is not None else 0.0,
                 "roll": float(roll[0]) if roll is not None else 0.0,
                 "pitch": float(pitch[0]) if pitch is not None else 0.0,
-                "yaw": float(yaw[0]) if yaw is not None else 0.0
+                "yaw": float(yaw[0]) if yaw is not None else 0.0,
+                "blink_rate": int(Scorer.blink_rate)
             })
 
 
@@ -367,6 +381,7 @@ def main():
 
     cap.release()
     cv2.destroyAllWindows()
+    Detector.close()
 
     return
 

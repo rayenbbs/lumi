@@ -122,9 +122,10 @@ export class TriggerEngine {
 
     const now = Date.now()
 
-    // Respect minimum gap between interventions, EXCEPT for falling asleep (critical)
+    // Respect minimum gap between interventions, EXCEPT for falling asleep and distraction (immediate)
     const isAsleepNow = driverMetrics?.asleep;
-    if (!isAsleepNow && now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) {
+    const isDistractedNow = activeWindow && isDistractingWindow(activeWindow);
+    if (!isAsleepNow && !isDistractedNow && now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) {
       console.log('[TRIGGER] skip: intervention gap, wait', Math.round((CONFIG.MIN_INTERVENTION_GAP - (now - this.lastInterventionTime)) / 1000), 's')
       return
     }
@@ -191,18 +192,11 @@ export class TriggerEngine {
         }
       }
     } else if (this.distractionStartTime) {
-      // Was on a distracting window, now on something else.
-      // Only reset after 3s of sustained non-distracting focus
-      // (handles brief bounces to Lumi/Electron/taskbar)
-      if (!this.nonDistractingStartTime) {
-        this.nonDistractingStartTime = now
-      }
-      if (now - this.nonDistractingStartTime > 3000) {
-        console.log('[TRIGGER] distraction timer reset — student returned to non-distracting window')
-        this.distractionStartTime = null
-        this.nonDistractingStartTime = null
-        this.distractionNudgeCount = 0
-      }
+      // Student returned to a non-distracting window — reset immediately
+      console.log('[TRIGGER] distraction timer reset — student returned to non-distracting window')
+      this.distractionStartTime = null
+      this.nonDistractingStartTime = null
+      this.distractionNudgeCount = 0
     }
 
     return null

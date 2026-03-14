@@ -106,6 +106,11 @@ class AttentionScorer:
         self.eye_closure_counter = 0
         self.prev_time = t_now
 
+        # Blink counter — tracks open→closed→open transitions in a rolling 60s window
+        self._eyes_were_closed = False
+        self._blink_timestamps: list[float] = []
+        self.blink_rate = 0  # blinks per minute (rolling 60s)
+
     def _update_metric(self, metric_value, condition, elapsed):
         """
         Update a given metric timer based on the condition.
@@ -294,6 +299,17 @@ class AttentionScorer:
             perclos_score = np.sum(self.closed_flags) / total_frames
         else:
             perclos_score = 0.0
+
+        # Update blink counter — a blink is a closed→open transition
+        eye_closed = (ear_score is not None) and (ear_score <= self.ear_thresh)
+        if self._eyes_were_closed and not eye_closed:
+            self._blink_timestamps.append(t_now)
+        self._eyes_were_closed = eye_closed
+
+        # Trim to rolling 60s window
+        cutoff = t_now - self.PERCLOS_TIME_PERIOD
+        self._blink_timestamps = [t for t in self._blink_timestamps if t >= cutoff]
+        self.blink_rate = len(self._blink_timestamps)
 
         tired = perclos_score >= self.perclos_thresh
         return tired, perclos_score

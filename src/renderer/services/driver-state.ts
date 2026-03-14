@@ -9,6 +9,7 @@ export interface DriverStateMetrics {
   roll: number
   pitch: number
   yaw: number
+  blink_rate: number  // blinks per minute (rolling 60s window)
 }
 
 export class DriverStateService {

@@ -38,11 +38,22 @@ def resize(frame, scale_percent):
 
 
 def get_landmarks(lms):
+    """
+    Extract landmarks from MediaPipe face detection results.
+    Supports both the legacy mp.solutions API and the new mp.tasks API.
+    Returns a numpy array of shape (N, 3) with x, y, z coordinates clamped to [0, 1].
+    """
     surface = 0
+    biggest_face = None
     for lms0 in lms:
-        landmarks = [np.array([point.x, point.y, point.z]) for point in lms0.landmark]
+        # New Tasks API: list of NormalizedLandmark with .x, .y, .z
+        # Legacy API: NormalizedLandmarkList with .landmark attribute
+        if hasattr(lms0, 'landmark'):
+            points = lms0.landmark
+        else:
+            points = lms0
 
-        landmarks = np.array(landmarks)
+        landmarks = np.array([[point.x, point.y, point.z] for point in points])
 
         landmarks[landmarks[:, 0] < 0.0, 0] = 0.0
         landmarks[landmarks[:, 0] > 1.0, 0] = 1.0
@@ -53,6 +64,7 @@ def get_landmarks(lms):
         dy = landmarks[:, 1].max() - landmarks[:, 1].min()
         new_surface = dx * dy
         if new_surface > surface:
+            surface = new_surface
             biggest_face = landmarks
 
     return biggest_face
