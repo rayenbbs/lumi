@@ -57,6 +57,7 @@ export default function App() {
   const [focusScore, setFocusScore] = useState(0)
   const [inputText, setInputText] = useState('')
   const [showInput, setShowInput] = useState(false)
+  const [gazePosition, setGazePosition] = useState<{ x: number; y: number } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Service refs (stable across renders)
@@ -91,6 +92,22 @@ export default function App() {
   useEffect(() => {
     lastOCRRef.current = lastOCRText
   }, [lastOCRText])
+
+  // Sync gaze position from eye tracker ref into React state (RAF loop)
+  useEffect(() => {
+    if (eyeStatus !== 'active') {
+      setGazePosition(null)
+      return
+    }
+    let animId: number
+    const loop = () => {
+      const pos = latestMetricsRef.current?.gazePosition ?? null
+      setGazePosition(pos)
+      animId = requestAnimationFrame(loop)
+    }
+    animId = requestAnimationFrame(loop)
+    return () => cancelAnimationFrame(animId)
+  }, [eyeStatus])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -513,6 +530,7 @@ export default function App() {
         {showBionicReader && (
           <BionicReader
             text={lastOCRText}
+            gazePosition={gazePosition}
             onClose={() => setShowBionicReader(false)}
           />
         )}
@@ -645,6 +663,14 @@ export default function App() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── GAZE DOT ── */}
+      {eyeStatus === 'active' && gazePosition && (
+        <div
+          className="gaze-cursor"
+          style={{ left: gazePosition.x, top: gazePosition.y }}
+        />
+      )}
 
       {/* ── LUMI CHARACTER + LABEL ── */}
       <div className="absolute bottom-4 left-1/2 -translate-x-1/2 flex flex-col items-center gap-2">

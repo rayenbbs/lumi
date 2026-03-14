@@ -1,31 +1,33 @@
+import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
 
 interface Props {
   text: string
+  gazePosition?: { x: number; y: number } | null
   onClose: () => void
 }
 
-function toBionic(text: string): React.ReactNode[] {
-  return text.split(' ').map((word, i) => {
-    const clean = word.replace(/[^a-zA-Z]/g, '')
-    if (clean.length <= 1) {
-      return <span key={i}>{word} </span>
+export default function BionicReader({ text, gazePosition, onClose }: Props) {
+  const [gazedWordIdx, setGazedWordIdx] = useState<number | null>(null)
+
+  // Resolve which word is under the gaze point using DOM hit-testing
+  useEffect(() => {
+    if (!gazePosition) {
+      setGazedWordIdx(null)
+      return
     }
+    const el = document.elementFromPoint(gazePosition.x, gazePosition.y)
+    if (!el) { setGazedWordIdx(null); return }
+    const wordEl = el.closest('[data-word-index]') as HTMLElement | null
+    if (wordEl) {
+      setGazedWordIdx(parseInt(wordEl.dataset.wordIndex ?? '-1', 10))
+    } else {
+      setGazedWordIdx(null)
+    }
+  }, [gazePosition])
 
-    const boldLen = Math.max(1, Math.ceil(clean.length * 0.45))
-    const boldPart = word.substring(0, boldLen)
-    const lightPart = word.substring(boldLen)
+  const words = (text || 'No text captured yet. Start studying with a document open!').split(' ')
 
-    return (
-      <span key={i}>
-        <strong className="font-bold text-white">{boldPart}</strong>
-        <span className="font-light text-white/55">{lightPart}</span>{' '}
-      </span>
-    )
-  })
-}
-
-export default function BionicReader({ text, onClose }: Props) {
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -44,7 +46,9 @@ export default function BionicReader({ text, onClose }: Props) {
         <div className="flex justify-between items-center mb-5">
           <div>
             <h2 className="text-purple-400 font-semibold text-base">Bionic Reading Mode</h2>
-            <p className="text-white/40 text-xs mt-0.5">Bold anchors guide your eye focus</p>
+            <p className="text-white/40 text-xs mt-0.5">
+              {gazePosition ? 'Eye tracking active — gaze highlights words' : 'Bold anchors guide your eye focus'}
+            </p>
           </div>
           <button
             onClick={onClose}
@@ -57,7 +61,32 @@ export default function BionicReader({ text, onClose }: Props) {
         {/* Content */}
         <div className="max-h-[65vh] overflow-y-auto pr-2">
           <div className="text-lg leading-[2] tracking-wide font-serif text-white/90">
-            {toBionic(text || 'No text captured yet. Start studying with a document open!')}
+            {words.map((word, i) => {
+              const clean = word.replace(/[^a-zA-Z]/g, '')
+              const isGazed = i === gazedWordIdx
+
+              if (clean.length <= 1) {
+                return (
+                  <span key={i} data-word-index={i} className={isGazed ? 'gaze-word' : ''}>
+                    {word}{' '}
+                  </span>
+                )
+              }
+
+              const boldLen = Math.max(1, Math.ceil(clean.length * 0.45))
+              const boldPart = word.substring(0, boldLen)
+              const lightPart = word.substring(boldLen)
+
+              return (
+                <span key={i} data-word-index={i} className={`inline ${isGazed ? 'gaze-word' : ''}`}>
+                  <strong className="font-bold text-white">{boldPart}</strong>
+                  <span className={`font-light ${isGazed ? 'text-white' : 'text-white/55'}`}>
+                    {lightPart}
+                  </span>
+                  {' '}
+                </span>
+              )
+            })}
           </div>
         </div>
 
