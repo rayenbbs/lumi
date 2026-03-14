@@ -60,6 +60,31 @@ body,
   border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
+/* Gaze cursor dot — follows eye position on screen */
+.gaze-cursor {
+  position: fixed;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: rgba(139, 92, 246, 0.25);
+  border: 2px solid rgba(139, 92, 246, 0.7);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  z-index: 9999;
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.5);
+  transition: left 80ms linear, top 80ms linear;
+}
+
+/* Word highlight when gaze is on it */
+.gaze-word {
+  background: rgba(139, 92, 246, 0.22);
+  border-radius: 3px;
+  padding: 0 3px;
+  text-shadow: 0 0 10px rgba(139, 92, 246, 0.9);
+  color: white;
+  transition: background 120ms ease, text-shadow 120ms ease;
+}
+
 /* WebGazer video - hide it */
 #webgazerVideoContainer,
 #webgazerFaceOverlay,

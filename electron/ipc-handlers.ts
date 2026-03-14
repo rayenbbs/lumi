@@ -1,5 +1,6 @@
 import { ipcMain, BrowserWindow, desktopCapturer } from 'electron'
 import { mainWindow } from './main'
+import Store from 'electron-store'
 
 let activeWinModule: any = null
 
@@ -12,6 +13,10 @@ async function getActiveWin() {
 }
 
 export function registerIpcHandlers(win: BrowserWindow) {
+
+  const sessionStore = new Store({
+    name: 'lumi',
+  })
 
   // === ACTIVE WINDOW DETECTION ===
   ipcMain.handle('get-active-window', async () => {
@@ -132,15 +137,14 @@ export function registerIpcHandlers(win: BrowserWindow) {
   })
 
   // === SESSION PERSISTENCE ===
-  const sessionData: Record<string, any> = {}
-
   ipcMain.handle('save-session', (_event, data: any) => {
-    Object.assign(sessionData, data)
+    const current = (sessionStore.get('sessionData') as Record<string, any> | undefined) ?? {}
+    sessionStore.set('sessionData', { ...current, ...data })
     return true
   })
 
   ipcMain.handle('load-session', () => {
-    return sessionData
+    return (sessionStore.get('sessionData') as Record<string, any> | undefined) ?? {}
   })
 }
 

@@ -43,6 +43,7 @@ interface LumiStore {
   // Chat
   messages: ChatMessage[]
   addMessage: (msg: ChatMessage) => void
+  setMessages: (msgs: ChatMessage[]) => void
   clearMessages: () => void
 
   // OCR
@@ -87,6 +88,7 @@ export const useLumiStore = create<LumiStore>((set) => ({
     set((state) => ({
       messages: [...state.messages.slice(-49), msg], // Keep last 50 messages
     })),
+  setMessages: (messages) => set({ messages: messages.slice(-50) }),
   clearMessages: () => set({ messages: [] }),
 
   lastOCRText: '',

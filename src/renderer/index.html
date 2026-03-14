@@ -5,7 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.jsdelivr.net; connect-src 'self' http://localhost:* https://cdn.jsdelivr.net blob: data:; media-src 'self' blob: data:" />
     <title>Lumi</title>
-    <!-- WebGazer: load from CDN for dev; use local file in prod -->
+    <!-- WebGazer (optional): loaded from CDN for hackathon convenience. If it fails, eye tracking is disabled gracefully. -->
+    <script defer src="https://cdn.jsdelivr.net/npm/webgazer@3.5.3/dist/webgazer.js"></script>
     <script>
       // Suppress WebGazer's noisy console logs
       const _consoleWarn = console.warn;
