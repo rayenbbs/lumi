@@ -1,11 +1,38 @@
 import { config as loadEnv } from 'dotenv'
 import { app, BrowserWindow, screen, session, shell } from 'electron'
 import path from 'path'
+import { spawn, ChildProcess } from 'child_process'
 import { registerIpcHandlers } from './ipc-handlers'
 
 loadEnv()
 
 export let mainWindow: BrowserWindow | null = null
+let pythonProcess: ChildProcess | null = null
+
+function spawnPythonServer() {
+  const pythonPath = 'python' // Note: This assumes python is in PATH and has dependencies installed
+  const scriptDir = path.join(__dirname, '../../Driver-State-Detection/driver_state_detection')
+  
+  const args = ['main.py']
+  const debugRequested = process.env.LUMI_DRIVER_DEBUG === '1'
+  const isDevMode = process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL !== undefined
+  if (debugRequested || isDevMode) {
+    args.push('--debug')
+  }
+
+  pythonProcess = spawn(pythonPath, args, {
+    cwd: scriptDir,
+    stdio: 'inherit' // Pipe logs to Electron console so we can see what's happening
+  })
+
+  pythonProcess.on('error', (err) => {
+    console.error('Failed to start Python subprocess:', err)
+  })
+
+  pythonProcess.on('close', (code) => {
+    console.log(`Python process exited with code ${code}`)
+  })
+}
 
 
 function createWindow() {
@@ -70,6 +97,7 @@ app.whenReady().then(() => {
     return true
   })
 
+  spawnPythonServer()
   createWindow()
 
   app.on('activate', () => {
@@ -79,6 +107,13 @@ app.whenReady().then(() => {
   })
 })
 
+app.on('will-quit', () => {
+  if (pythonProcess) {
+    pythonProcess.kill()
+  }
+})
+
 app.on('window-all-closed', () => {
   app.quit()
 })
+

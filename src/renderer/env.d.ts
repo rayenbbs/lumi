@@ -22,6 +22,18 @@ interface Window {
       triggerType: string
       ocrText: string
       userQuestion?: string
+      driverState?: {
+        tired: boolean
+        asleep: boolean
+        looking_away: boolean
+        distracted: boolean
+        ear: number
+        perclos: number
+        gaze: number
+        roll: number
+        pitch: number
+        yaw: number
+      } | null
       conversationHistory: Array<{ role: string; content: string }>
       syllabusContext?: string
     }) => Promise<{ success: boolean; message: string }>

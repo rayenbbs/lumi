@@ -27,13 +27,7 @@ interface LumiStore {
   showSessionSummary: boolean
   setShowSessionSummary: (v: boolean) => void
 
-  showCalibration: boolean
-  setShowCalibration: (v: boolean) => void
-
   // Status
-  eyeStatus: 'off' | 'calibrating' | 'active'
-  setEyeStatus: (s: 'off' | 'calibrating' | 'active') => void
-
   micStatus: 'off' | 'listening'
   setMicStatus: (s: 'off' | 'listening') => void
 
@@ -71,12 +65,6 @@ export const useLumiStore = create<LumiStore>((set) => ({
   showSessionSummary: false,
   setShowSessionSummary: (showSessionSummary) => set({ showSessionSummary }),
 
-  showCalibration: false,
-  setShowCalibration: (showCalibration) => set({ showCalibration }),
-
-  eyeStatus: 'off',
-  setEyeStatus: (eyeStatus) => set({ eyeStatus }),
-
   micStatus: 'off',
   setMicStatus: (micStatus) => set({ micStatus }),
 
@@ -97,3 +85,4 @@ export const useLumiStore = create<LumiStore>((set) => ({
   sessionStartTime: null,
   setSessionStartTime: (sessionStartTime) => set({ sessionStartTime }),
 }))
+
