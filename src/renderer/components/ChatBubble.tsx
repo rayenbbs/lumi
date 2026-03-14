@@ -5,6 +5,7 @@ import { TRIGGER_ICONS, TRIGGER_COLORS } from '../config/prompts'
 export default function ChatBubble({ message }: { message: ChatMessage }) {
   const isLumi = message.role === 'lumi'
   const triggerType = message.triggerType
+  const attachments = message.attachments || []
 
   const colorClass =
     isLumi && triggerType
@@ -34,6 +35,20 @@ export default function ChatBubble({ message }: { message: ChatMessage }) {
           </span>
         )}
         {message.text}
+
+        {attachments.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {attachments.map((file) => (
+              <span
+                key={file.id}
+                className="inline-flex items-center rounded-full bg-black/25 border border-white/20 px-2 py-0.5 text-[10px] text-white/90"
+                title={file.previewText || file.name}
+              >
+                📎 {file.name}
+              </span>
+            ))}
+          </div>
+        )}
       </div>
       <div
         className={`text-xs text-white/30 mt-1 px-1 ${isLumi ? 'text-left' : 'text-right'}`}
