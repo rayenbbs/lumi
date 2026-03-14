@@ -43,7 +43,7 @@ export default function CalibrationOverlay({ onComplete, onSkip }: Props) {
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
       className="fixed inset-0 z-[100]"
-      style={{ background: 'rgba(5, 3, 20, 0.95)', cursor: 'none' }}
+      style={{ background: 'rgba(5, 3, 20, 0.95)', cursor: 'default' }}
     >
       {/* Instructions */}
       <div className="absolute top-8 left-1/2 -translate-x-1/2 text-center z-10">
@@ -72,7 +72,7 @@ export default function CalibrationOverlay({ onComplete, onSkip }: Props) {
             initial={{ scale: 0, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0, opacity: 0 }}
-            className="no-drag absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2"
+            className="no-drag absolute w-8 h-8 -translate-x-1/2 -translate-y-1/2 cursor-pointer"
             style={{
               left: `${point.x}%`,
               top: `${point.y}%`,
