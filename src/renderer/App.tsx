@@ -21,7 +21,7 @@ declare global {
     electronAPI: {
       getActiveWindow: () => Promise<{ title: string; owner: string; url: string | null } | null>
       captureScreen: () => Promise<string | null>
-      sendToOllama: (payload: {
+      sendToGemini: (payload: {
         triggerType: string
         ocrText: string
         userQuestion?: string
@@ -33,8 +33,6 @@ declare global {
       resizeWindow: (w: number, h: number) => Promise<void>
       saveSession: (data: any) => Promise<boolean>
       loadSession: () => Promise<any>
-      startDrag: (mouseX: number, mouseY: number) => Promise<any>
-      stopDrag: () => Promise<{ closed: boolean }>
     }
   }
 }
@@ -58,9 +56,8 @@ export default function App() {
   const [sessionStats, setSessionStats] = useState<any>(null)
   const [focusScore, setFocusScore] = useState(0)
   const [inputText, setInputText] = useState('')
-  const [showInput, setShowInput] = useState(false)
   const [gazePosition, setGazePosition] = useState<{ x: number; y: number } | null>(null)
-  const [isDragging, setIsDragging] = useState(false)
+  const [isSpeaking, setIsSpeaking] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
 
   // Service refs (stable across renders)
@@ -254,6 +251,7 @@ export default function App() {
       if (!window.electronAPI) return
       try {
         latestWindowRef.current = await window.electronAPI.getActiveWindow()
+        console.log('[WINDOW]', JSON.stringify(latestWindowRef.current))
       } catch {
         latestWindowRef.current = null
       }
@@ -343,7 +341,6 @@ export default function App() {
 
     sessionTrackerRef.current.recordTrigger(event.type)
     setIsThinking(true)
-    setIsExpanded(true)
     setLumiState('intervening')
 
     try {
@@ -357,12 +354,21 @@ export default function App() {
         }
       }
 
-      const response = await window.electronAPI?.sendToOllama({
+      // For distractions, don't send old conversation history — it confuses the model
+      const history = event.type === 'distraction'
+        ? []
+        : conversationHistoryRef.current.slice(-CONFIG.CONVERSATION_CONTEXT_MESSAGES)
+
+      const payload = {
         triggerType: event.type,
         ocrText: event.context,
-        conversationHistory: conversationHistoryRef.current.slice(-CONFIG.CONVERSATION_CONTEXT_MESSAGES),
+        conversationHistory: history,
         syllabusContext,
-      })
+      }
+      console.log('[LLM] Sending to LLM:', JSON.stringify(payload, null, 2))
+
+      const response = await window.electronAPI?.sendToGemini(payload)
+      console.log('[LLM] Response:', JSON.stringify(response))
 
       const msg = response?.message ?? "Hey! I'm here if you need me."
 
@@ -379,9 +385,6 @@ export default function App() {
 
       setIsThinking(false)
 
-      // Speak
-      await speechServiceRef.current?.speak(msg)
-
       // Play sound for distraction
       if (event.type === 'distraction') {
         playSound('nudge')
@@ -390,19 +393,22 @@ export default function App() {
       } else if (event.type === 'fatigue') {
         playSound('break-time')
       }
+
+      // Speak — set chatting only during TTS
+      setLumiState('chatting')
+      setIsSpeaking(true)
+      await speechServiceRef.current?.speak(msg)
+      setIsSpeaking(false)
     } catch (err) {
       console.error('[Trigger] Failed:', err)
       setIsThinking(false)
+      setIsSpeaking(false)
+    } finally {
+      // Always return to watching — even if LLM or TTS errored
+      engineRef.current.setState('watching')
+      setLumiState('watching')
     }
-
-    // Return to watching after message
-    setTimeout(() => {
-      if (engineRef.current.getState() === 'intervening') {
-        engineRef.current.setState('watching')
-        setLumiState('watching')
-      }
-    }, 4000)
-  }, [addMessage, setIsExpanded, setIsThinking, setLumiState])
+  }, [addMessage, setIsThinking, setLumiState])
 
   // ─── HANDLE USER SPEECH / TEXT INPUT ─────────────────────────────────────
   const handleUserSpeech = useCallback(async (transcript: string) => {
@@ -423,8 +429,6 @@ export default function App() {
 
     setIsExpanded(true)
     setIsThinking(true)
-    engineRef.current.setState('chatting')
-    setLumiState('chatting')
 
     try {
       // Search syllabus for context
@@ -434,7 +438,7 @@ export default function App() {
         syllabusContext = results.slice(0, 3).map((r: any) => r.text || r).join('\n\n')
       }
 
-      const response = await window.electronAPI?.sendToOllama({
+      const response = await window.electronAPI?.sendToGemini({
         triggerType: 'question',
         ocrText: lastOCRRef.current,
         userQuestion: text,
@@ -454,22 +458,24 @@ export default function App() {
 
       addMessage(lumiMsg)
       conversationHistoryRef.current.push({ role: 'assistant', content: msg })
+      setIsThinking(false)
+
+      // TTS — chatting state only while speaking
+      setLumiState('chatting')
+      setIsSpeaking(true)
+      await speechServiceRef.current?.speak(msg)
+      setIsSpeaking(false)
+      setLumiState('watching')
+      engineRef.current.setState('watching')
 
       // Extract topic for session tracking
       const topic = text.split(' ').slice(0, 4).join(' ')
       sessionTrackerRef.current.recordTopic(topic)
     } catch (err) {
       console.error('[UserMsg] Failed:', err)
+      setIsThinking(false)
+      setIsSpeaking(false)
     }
-
-    setIsThinking(false)
-
-    setTimeout(() => {
-      if (engineRef.current.getState() === 'chatting') {
-        engineRef.current.setState('watching')
-        setLumiState('watching')
-      }
-    }, 6000)
   }, [addMessage, setIsExpanded, setIsThinking, setLumiState])
 
   // ─── TEXT INPUT SUBMIT ────────────────────────────────────────────────────
@@ -484,34 +490,53 @@ export default function App() {
     sendUserMessage(text)
   }, [inputText, lumiState, startSession, sendUserMessage])
 
+  // ─── MASCOT DRAG ────────────────────────────────────────────────────────
+  const [mascotPos, setMascotPos] = useState<{ x: number; y: number } | null>(null)
+  const didDragRef = useRef(false)
+
+  const handleMascotMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+
+    didDragRef.current = false
+    const startX = e.clientX
+    const startY = e.clientY
+    const el = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const offsetX = e.clientX - el.left
+    const offsetY = e.clientY - el.top
+
+    const handleMouseMove = (ev: MouseEvent) => {
+      const dx = Math.abs(ev.clientX - startX)
+      const dy = Math.abs(ev.clientY - startY)
+      if (dx > 4 || dy > 4) didDragRef.current = true
+      if (didDragRef.current) {
+        setMascotPos({ x: ev.clientX - offsetX, y: ev.clientY - offsetY })
+      }
+    }
+
+    const handleMouseUp = () => {
+      document.removeEventListener('mousemove', handleMouseMove)
+      document.removeEventListener('mouseup', handleMouseUp)
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    document.addEventListener('mouseup', handleMouseUp)
+  }, [])
+
   // ─── CHARACTER CLICK ──────────────────────────────────────────────────────
   const handleCharacterClick = useCallback(() => {
+    if (didDragRef.current) return
     if (lumiState === 'sleeping') {
       startSession()
     } else {
+      // Reset intervening state when user acknowledges by clicking
+      if (lumiState === 'intervening') {
+        setLumiState('watching')
+        engineRef.current.setState('watching')
+      }
       setIsExpanded(!isExpanded)
     }
-  }, [lumiState, isExpanded, startSession, setIsExpanded])
-
-  // ─── DRAG TO CLOSE ──────────────────────────────────────────────────────
-  const handleDragStart = useCallback(async (e: React.MouseEvent) => {
-    if (e.button !== 0) return
-    if (!window.electronAPI) return
-    e.preventDefault()
-
-    // Tell main process to start drag — it polls the cursor position directly
-    await window.electronAPI.startDrag(e.screenX, e.screenY)
-    setIsDragging(true)
-
-    const handleMouseUp = async () => {
-      document.removeEventListener('mouseup', handleMouseUp)
-      setIsDragging(false)
-      // Tell main process to stop — it checks overlap and closes if needed
-      await window.electronAPI.stopDrag()
-    }
-
-    document.addEventListener('mouseup', handleMouseUp)
-  }, [])
+  }, [lumiState, isExpanded, startSession, setIsExpanded, setLumiState])
 
   function playSound(name: string) {
     try {
@@ -523,93 +548,132 @@ export default function App() {
     }
   }
 
+  // ─── CLICK-THROUGH TOGGLE ────────────────────────────────────────────────
+  // Global mousemove listener: check if cursor is over a UI element.
+  // If yes → disable click-through so clicks register.
+  // If no  → enable click-through so clicks pass to apps behind.
+  const isClickThroughRef = useRef(true)
+
+  const handleMouseEnterUI = useCallback(() => {
+    if (window.electronAPI && isClickThroughRef.current) {
+      isClickThroughRef.current = false
+      window.electronAPI.setClickThrough(false)
+    }
+  }, [])
+
+  const handleMouseLeaveUI = useCallback(() => {
+    if (window.electronAPI && !isClickThroughRef.current) {
+      isClickThroughRef.current = true
+      window.electronAPI.setClickThrough(true)
+    }
+  }, [])
+  useEffect(() => {
+    if (!window.electronAPI) return
+
+    const handleMouseMove = (e: MouseEvent) => {
+      // elementFromPoint returns null on transparent areas (pointer-events: none)
+      const el = document.elementFromPoint(e.clientX, e.clientY)
+      const isOverUI = el !== null && el !== document.documentElement && el !== document.body
+
+      if (isOverUI && isClickThroughRef.current) {
+        isClickThroughRef.current = false
+        window.electronAPI.setClickThrough(false)
+      } else if (!isOverUI && !isClickThroughRef.current) {
+        isClickThroughRef.current = true
+        window.electronAPI.setClickThrough(true)
+      }
+    }
+
+    document.addEventListener('mousemove', handleMouseMove)
+    return () => document.removeEventListener('mousemove', handleMouseMove)
+  }, [])
+
   // ─── RENDER ───────────────────────────────────────────────────────────────
   const isActive = lumiState !== 'sleeping'
+  // Show the side panel when expanded OR when there's an overlay active
+  const showSidePanel = isExpanded && isActive
 
   return (
-    <div className="w-full h-full relative overflow-hidden flex flex-col">
+    <div className="w-full h-full relative overflow-hidden pointer-events-none">
 
-      {/* ── FULLSCREEN OVERLAYS ── */}
+      {/* ── FULLSCREEN OVERLAYS (calibration, bionic reader, session summary) ── */}
       <AnimatePresence>
         {showCalibration && (
-          <CalibrationOverlay onComplete={onCalibrationDone} onSkip={onCalibrationSkip} />
+          <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
+            <CalibrationOverlay onComplete={onCalibrationDone} onSkip={onCalibrationSkip} />
+          </div>
         )}
       </AnimatePresence>
       <AnimatePresence>
         {showBionicReader && (
-          <BionicReader text={lastOCRText} gazePosition={gazePosition} onClose={() => setShowBionicReader(false)} />
+          <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
+            <BionicReader text={lastOCRText} gazePosition={gazePosition} onClose={() => setShowBionicReader(false)} />
+          </div>
         )}
       </AnimatePresence>
       <AnimatePresence>
         {showSessionSummary && sessionStats && (
-          <SessionSummary
-            stats={sessionStats}
-            focusScore={focusScore}
-            onClose={() => { setShowSessionSummary(false); setLumiState('sleeping'); clearMessages() }}
-          />
+          <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
+            <SessionSummary
+              stats={sessionStats}
+              focusScore={focusScore}
+              onClose={() => { setShowSessionSummary(false); setLumiState('sleeping'); clearMessages() }}
+            />
+          </div>
         )}
       </AnimatePresence>
 
-      {/* ── BACKGROUND PANEL ── */}
-      {isActive && <div className="lumi-bg-panel absolute inset-0 rounded-2xl z-0" />}
+      {/* ── SIDE CHAT PANEL (slides from right) ── */}
+      <AnimatePresence>
+        {showSidePanel && (
+          <motion.div
+            key="side-panel"
+            initial={{ x: '100%', opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: '100%', opacity: 0 }}
+            transition={{ type: 'spring', damping: 28, stiffness: 300 }}
+            className="absolute right-0 top-0 bottom-0 w-[380px] z-30 flex flex-col pointer-events-auto"
+            onMouseEnter={handleMouseEnterUI}
+            onMouseLeave={handleMouseLeaveUI}
+          >
+            {/* Panel background */}
+            <div className="absolute inset-0 lumi-bg-panel rounded-l-2xl" style={{ pointerEvents: 'none' }} />
 
-      {/* ── DRAG HANDLE (invisible, top strip) ── */}
-      <div className="h-6 shrink-0 z-10 cursor-grab active:cursor-grabbing" onMouseDown={handleDragStart} />
+            {/* Top bar: status + actions */}
+            <div className="relative z-10 px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2.5">
+                <OllamaIndicator status={ollamaStatus} />
+                <EyeIndicator status={eyeStatus} />
+                <MicIndicator status={micStatus} />
+              </div>
+              <div className="flex items-center gap-1.5">
+                <button
+                  onClick={() => setShowBionicReader(!showBionicReader)}
+                  className={`cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
+                    showBionicReader
+                      ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
+                      : 'lumi-btn'
+                  }`}
+                >
+                  Read
+                </button>
+                <button
+                  onClick={stopSession}
+                  className="cursor-pointer text-xs px-2.5 py-1 rounded-md lumi-btn hover:!text-red-400 hover:!border-red-400/30"
+                >
+                  End
+                </button>
+                <button
+                  onClick={() => setIsExpanded(false)}
+                  className="cursor-pointer text-xs px-2 py-1 rounded-md lumi-btn"
+                >
+                  ✕
+                </button>
+              </div>
+            </div>
 
-      {/* ── TOP ROW: status dots + action buttons ── */}
-      <div className="no-drag relative z-30 px-3 pb-2 flex items-center justify-between shrink-0">
-        {/* Status dots (left) */}
-        <div className="flex items-center gap-2.5">
-          <OllamaIndicator status={ollamaStatus} />
-          <EyeIndicator status={eyeStatus} />
-          <MicIndicator status={micStatus} />
-        </div>
-
-        {/* Action buttons (right) */}
-        {isActive && (
-          <div className="flex items-center gap-1.5">
-            <button
-              onClick={() => setShowInput(!showInput)}
-              className={`no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
-                showInput
-                  ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
-                  : 'lumi-btn'
-              }`}
-            >
-              Ask
-            </button>
-            <button
-              onClick={() => setShowBionicReader(!showBionicReader)}
-              className={`no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
-                showBionicReader
-                  ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
-                  : 'lumi-btn'
-              }`}
-            >
-              Read
-            </button>
-            <button
-              onClick={stopSession}
-              className="no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md lumi-btn hover:!text-red-400 hover:!border-red-400/30"
-            >
-              End
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* ── CHAT MESSAGES ── */}
-      <div className="flex-1 relative z-20 min-h-0 no-drag">
-        <AnimatePresence>
-          {isExpanded && messages.length > 0 && (
-            <motion.div
-              key="chat-panel"
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 10 }}
-              transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="absolute inset-x-3 bottom-0 top-0 overflow-y-auto flex flex-col gap-2"
-            >
+            {/* Chat messages */}
+            <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-4 flex flex-col gap-2">
               <div className="flex-1" />
               {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
                 <ChatBubble key={msg.id} message={msg} />
@@ -634,42 +698,28 @@ export default function App() {
                 </motion.div>
               )}
               <div ref={messagesEndRef} />
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
+            </div>
 
-      {/* ── TEXT INPUT ── */}
-      {showInput && (
-        <div className="no-drag relative z-30 px-3 pb-2 shrink-0">
-          <form onSubmit={handleInputSubmit} className="flex gap-2">
-            <input
-              type="text"
-              value={inputText}
-              onChange={(e) => setInputText(e.target.value)}
-              placeholder="Ask Lumi anything..."
-              autoFocus
-              className="flex-1 select-text glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
-            />
-            <button
-              type="submit"
-              className="no-drag cursor-pointer glass rounded-xl px-4 py-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
-            >
-              Send
-            </button>
-          </form>
-        </div>
-      )}
-
-      {/* ── DRAG INDICATOR ── */}
-      <AnimatePresence>
-        {isDragging && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 pointer-events-none rounded-2xl border-2 border-purple-400/40"
-          />
+            {/* Chat input — always visible */}
+            <div className="relative z-10 px-4 py-3 shrink-0">
+              <form onSubmit={handleInputSubmit} className="flex gap-2">
+                <input
+                  type="text"
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  placeholder="Ask Lumi anything..."
+                  autoFocus
+                  className="flex-1 select-text glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
+                />
+                <button
+                  type="submit"
+                  className="cursor-pointer glass rounded-xl px-4 py-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
+                >
+                  Send
+                </button>
+              </form>
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 
@@ -678,22 +728,36 @@ export default function App() {
         <div className="gaze-cursor" style={{ left: gazePosition.x, top: gazePosition.y }} />
       )}
 
-      {/* ── LUMI CHARACTER + LABEL ── */}
+      {/* ── LUMI CHARACTER (draggable) ── */}
       <div
-        className="relative z-20 flex flex-col items-center gap-1 pb-3 pt-1 shrink-0 cursor-grab active:cursor-grabbing"
-        onMouseDown={handleDragStart}
+        className="group absolute z-40 flex flex-col items-center gap-1 pointer-events-auto cursor-grab active:cursor-grabbing"
+        style={
+          mascotPos
+            ? { left: mascotPos.x, top: mascotPos.y }
+            : { bottom: 16, right: 16 }
+        }
+        onMouseEnter={handleMouseEnterUI}
+        onMouseLeave={handleMouseLeaveUI}
+        onMouseDown={handleMascotMouseDown}
       >
+        {/* Close button — appears on hover */}
+        <button
+          onClick={(e) => { e.stopPropagation(); window.electronAPI?.setClickThrough(false); window.close() }}
+          className="absolute -top-2 -right-2 w-6 h-6 rounded-full bg-red-500/80 hover:bg-red-500 text-white text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity z-50 cursor-pointer"
+        >
+          ✕
+        </button>
         <LumiCharacter
           state={lumiState}
           isThinking={isThinking}
           onClick={handleCharacterClick}
         />
         <p className={`text-center text-[11px] ${isActive ? 'text-white/40' : 'text-white/60'}`}>
-          {lumiState === 'sleeping' && 'Click Lumi to start studying'}
-          {lumiState === 'watching' && 'Watching over you...'}
+          {lumiState === 'sleeping' && 'Click to start'}
+          {lumiState === 'watching' && 'Watching...'}
           {lumiState === 'intervening' && 'Lumi has a message'}
-          {lumiState === 'chatting' && 'Chatting with you'}
-          {lumiState === 'break' && 'Enjoy your break!'}
+          {lumiState === 'chatting' && 'Chatting'}
+          {lumiState === 'break' && 'Break time!'}
         </p>
       </div>
     </div>

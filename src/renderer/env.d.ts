@@ -18,7 +18,7 @@ interface Window {
   electronAPI: {
     getActiveWindow: () => Promise<{ title: string; owner: string; url: string | null } | null>
     captureScreen: () => Promise<string | null>
-    sendToOllama: (payload: {
+    sendToGemini: (payload: {
       triggerType: string
       ocrText: string
       userQuestion?: string

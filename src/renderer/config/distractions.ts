@@ -9,6 +9,7 @@ export const DISTRACTION_PATTERNS = {
     'spotify',
     'tiktok',
     'snapchat',
+    'instagram',
     'minecraft',
     'roblox',
     'valorant',
@@ -67,16 +68,21 @@ export function isDistractingWindow(win: {
     if (ownerLower.includes(app)) return true
   }
 
-  // Check URL
-  if (win.url) {
+  // Check URL (macOS) and title (Windows — active-win doesn't provide URL on Windows)
+  const urlOrTitle = win.url || win.title
+  if (urlOrTitle) {
     // Check allowlist first
     for (const pattern of DISTRACTION_PATTERNS.allowlist) {
-      if (pattern.test(win.url)) return false
+      if (pattern.test(urlOrTitle)) return false
     }
     for (const domain of DISTRACTION_PATTERNS.urls) {
-      if (win.url.includes(domain)) return true
+      if (urlOrTitle.toLowerCase().includes(domain)) return true
     }
   }
+
+  // Check title for social media / entertainment app names
+  const socialPatterns = /\binstagram\b|\bfacebook\b|\btwitter\b|\breddit\b|\btiktok\b|\bnetflix\b|\btwitch\b|\byoutube\b|\bdiscord\b|\bsnapchat\b|\bwhatsapp\b/i
+  if (socialPatterns.test(titleLower)) return true
 
   // Check title for gaming signals
   const gamePatterns = /\bplaying\b|\bgame\b|fps:|score:/i

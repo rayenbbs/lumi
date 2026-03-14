@@ -21,10 +21,11 @@ export class EyeTrackerService {
   private metricsInterval: ReturnType<typeof setInterval> | null = null
   private onMetricsUpdate: ((metrics: EyeMetrics) => void) | null = null
 
-  private readonly HISTORY_WINDOW = 5000
+  private readonly HISTORY_WINDOW = 8000
   private readonly BLINK_WINDOW = 60000
-  private readonly STATIONARY_THRESHOLD = 100
-  private readonly METRICS_INTERVAL = 100
+  private readonly STATIONARY_THRESHOLD = 180
+  private readonly METRICS_INTERVAL = 250
+  private readonly SMOOTHING_WINDOW = 6 // average last N gaze points for stability
 
   async initialize(): Promise<boolean> {
     const webgazer = (window as any).webgazer
@@ -97,10 +98,19 @@ export class EyeTrackerService {
 
       const now = Date.now()
       const recentGaze = this.gazeHistory.filter(
-        (g) => now - g.timestamp < 1000
+        (g) => now - g.timestamp < 2000
       )
 
-      // Calculate gaze velocity (px/sec over last second)
+      // Smoothed gaze position (average of last N points)
+      let smoothedPosition: { x: number; y: number } | null = null
+      if (recentGaze.length > 0) {
+        const tail = recentGaze.slice(-this.SMOOTHING_WINDOW)
+        const avgX = tail.reduce((s, g) => s + g.x, 0) / tail.length
+        const avgY = tail.reduce((s, g) => s + g.y, 0) / tail.length
+        smoothedPosition = { x: Math.round(avgX), y: Math.round(avgY) }
+      }
+
+      // Calculate gaze velocity (px/sec over last 2s, smoothed)
       let velocity = 0
       if (recentGaze.length >= 2) {
         let totalDist = 0
@@ -117,13 +127,7 @@ export class EyeTrackerService {
 
       this.onMetricsUpdate({
         isOnScreen: recentGaze.length > 0,
-        gazePosition:
-          recentGaze.length > 0
-            ? {
-                x: recentGaze[recentGaze.length - 1].x,
-                y: recentGaze[recentGaze.length - 1].y,
-              }
-            : null,
+        gazePosition: smoothedPosition,
         blinkRate: this.blinkTimestamps.length,
         gazeVelocity: velocity,
         stationaryDuration: (now - this.stationaryStart) / 1000,

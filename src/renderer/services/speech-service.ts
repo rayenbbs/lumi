@@ -4,6 +4,7 @@ export class SpeechService {
   private isListening = false
   private onTranscript: ((text: string) => void) | null = null
   private restartTimer: ReturnType<typeof setTimeout> | null = null
+  private currentAudio: HTMLAudioElement | null = null
 
   initialize(): boolean {
     const SpeechRecognition =
@@ -78,11 +79,51 @@ export class SpeechService {
     }
   }
 
-  speak(text: string): Promise<void> {
+  async speak(text: string): Promise<void> {
+    // Try ElevenLabs first (human-quality voice)
+    if ((window as any).electronAPI?.textToSpeech) {
+      try {
+        const result = await (window as any).electronAPI.textToSpeech(text)
+        if (result.success && result.audio) {
+          return this.playAudioData(result.audio)
+        }
+      } catch (err) {
+        console.warn('[Speech] ElevenLabs failed, falling back to browser TTS:', err)
+      }
+    }
+
+    // Fallback: browser speechSynthesis
+    return this.speakBrowser(text)
+  }
+
+  private playAudioData(dataUrl: string): Promise<void> {
+    return new Promise((resolve) => {
+      this.cancelSpeech()
+
+      const audio = new Audio(dataUrl)
+      this.currentAudio = audio
+      audio.volume = 0.85
+
+      audio.onended = () => {
+        this.currentAudio = null
+        resolve()
+      }
+      audio.onerror = () => {
+        this.currentAudio = null
+        resolve()
+      }
+
+      audio.play().catch(() => {
+        this.currentAudio = null
+        resolve()
+      })
+    })
+  }
+
+  private speakBrowser(text: string): Promise<void> {
     return new Promise((resolve) => {
       this.synthesis.cancel()
 
-      // Strip emoji for cleaner TTS
       const cleanText = text.replace(
         /[\u{1F600}-\u{1F6FF}]|[\u{2600}-\u{26FF}]/gu,
         ''
@@ -93,7 +134,6 @@ export class SpeechService {
       utterance.pitch = 1.1
       utterance.volume = 0.85
 
-      // Pick a natural English voice
       const voices = this.synthesis.getVoices()
       const preferred =
         voices.find((v) => v.name.includes('Google') && v.lang.startsWith('en')) ||
@@ -110,15 +150,19 @@ export class SpeechService {
   }
 
   isSpeaking(): boolean {
-    return this.synthesis.speaking
+    return this.synthesis.speaking || (this.currentAudio !== null && !this.currentAudio.paused)
   }
 
   cancelSpeech() {
     this.synthesis.cancel()
+    if (this.currentAudio) {
+      this.currentAudio.pause()
+      this.currentAudio = null
+    }
   }
 
   destroy() {
     this.stopListening()
-    this.synthesis.cancel()
+    this.cancelSpeech()
   }
 }

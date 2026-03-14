@@ -42,6 +42,8 @@ export class TriggerEngine {
 
   // Distraction tracking
   private distractionStartTime: number | null = null
+  private nonDistractingStartTime: number | null = null
+  private distractionNudgeCount = 0
 
   // Wandering tracking
   private offScreenStartTime: number | null = null
@@ -99,16 +101,31 @@ export class TriggerEngine {
     activeWindow: ActiveWindowInfo | null,
     ocrText: string
   ) {
-    if (this.state === 'sleeping' || this.state === 'break') return
-    if (this.state === 'intervening') return // Don't stack interventions
-    if (this.state === 'chatting') return
+    if (this.state === 'sleeping' || this.state === 'break') {
+      console.log('[TRIGGER] skip: state =', this.state)
+      return
+    }
+    if (this.state === 'intervening') {
+      console.log('[TRIGGER] skip: state = intervening')
+      return
+    }
+    if (this.state === 'chatting') {
+      console.log('[TRIGGER] skip: state = chatting')
+      return
+    }
 
     const now = Date.now()
 
     // Respect minimum gap between interventions
-    if (now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) return
+    if (now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) {
+      console.log('[TRIGGER] skip: intervention gap, wait', Math.round((CONFIG.MIN_INTERVENTION_GAP - (now - this.lastInterventionTime)) / 1000), 's')
+      return
+    }
 
     // 1. Distraction (highest priority)
+    if (activeWindow) {
+      console.log('[TRIGGER] checking distraction:', activeWindow.owner, '|', activeWindow.title, '| isDistracting:', isDistractingWindow(activeWindow))
+    }
     const distraction = this.checkDistraction(activeWindow, now)
     if (distraction) { this.fireTrigger(distraction); return }
 
@@ -137,23 +154,41 @@ export class TriggerEngine {
     if (this.isOnCooldown('distraction', now)) return null
 
     if (isDistractingWindow(activeWindow)) {
+      // On a distracting window — start or continue the grace timer
+      this.nonDistractingStartTime = null
       if (!this.distractionStartTime) {
         this.distractionStartTime = now
+        console.log('[TRIGGER] distraction grace period started')
       }
       const elapsed = now - this.distractionStartTime
+      console.log('[TRIGGER] distraction grace elapsed:', Math.round(elapsed / 1000), 's /', Math.round(CONFIG.DISTRACTION_GRACE_PERIOD / 1000), 's')
       if (elapsed >= CONFIG.DISTRACTION_GRACE_PERIOD) {
-        this.distractionStartTime = null
+        this.distractionNudgeCount++
+        // Reset grace timer so it re-fires after another grace period
+        this.distractionStartTime = now
+        console.log('[TRIGGER] distraction nudge #', this.distractionNudgeCount)
         return {
           type: 'distraction',
-          confidence: 0.9,
+          confidence: Math.min(0.9 + this.distractionNudgeCount * 0.02, 1),
           context: `Student switched to: ${activeWindow.owner} — "${activeWindow.title}"${
             activeWindow.url ? ` (${activeWindow.url})` : ''
-          }`,
+          }. This is nudge #${this.distractionNudgeCount} — student has been distracted for ~${Math.round(this.distractionNudgeCount * CONFIG.DISTRACTION_GRACE_PERIOD / 1000)}s total.`,
           timestamp: now,
         }
       }
-    } else {
-      this.distractionStartTime = null
+    } else if (this.distractionStartTime) {
+      // Was on a distracting window, now on something else.
+      // Only reset after 3s of sustained non-distracting focus
+      // (handles brief bounces to Lumi/Electron/taskbar)
+      if (!this.nonDistractingStartTime) {
+        this.nonDistractingStartTime = now
+      }
+      if (now - this.nonDistractingStartTime > 3000) {
+        console.log('[TRIGGER] distraction timer reset — student returned to non-distracting window')
+        this.distractionStartTime = null
+        this.nonDistractingStartTime = null
+        this.distractionNudgeCount = 0
+      }
     }
 
     return null

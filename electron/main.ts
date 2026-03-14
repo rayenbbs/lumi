@@ -12,22 +12,20 @@ function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
 
   mainWindow = new BrowserWindow({
-    // Bottom-right corner
-    x: width - 440,
-    y: height - 560,
-    width: 420,
-    height: 540,
+    x: 0,
+    y: 0,
+    width,
+    height,
 
     // Transparent, frameless, always on top
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: false,
-    resizable: true,
+    resizable: false,
     hasShadow: false,
     roundedCorners: false,
 
-    // Click-through on transparent areas
     focusable: true,
 
     webPreferences: {
@@ -38,12 +36,15 @@ function createWindow() {
     },
   })
 
+  // Click-through on transparent areas, forward mouse events so we detect hover
+  mainWindow.setIgnoreMouseEvents(true, { forward: true })
+
   mainWindow.setMenuBarVisibility(false)
 
   // Open DevTools in dev mode
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL!)
-    // mainWindow.webContents.openDevTools({ mode: 'detach' })
+    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }

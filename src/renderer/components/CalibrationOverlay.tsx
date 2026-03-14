@@ -34,7 +34,7 @@ export default function CalibrationOverlay({ onComplete, onSkip }: Props) {
     }
   }, [clickCount, currentPoint, onComplete])
 
-  const point = CALIBRATION_POINTS[currentPoint]
+  const point = CALIBRATION_POINTS[Math.min(currentPoint, CALIBRATION_POINTS.length - 1)]
   const progress = (currentPoint / CALIBRATION_POINTS.length) * 100
 
   return (

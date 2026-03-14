@@ -52,11 +52,68 @@ export function registerIpcHandlers(win: BrowserWindow) {
     }
   })
 
+  // === ELEVENLABS TTS ===
+  const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || ''
+  // "Rachel" — warm, friendly female voice. Change voice_id for different voices.
+  const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+
+  ipcMain.handle('text-to-speech', async (_event, text: string) => {
+    if (!ELEVENLABS_API_KEY) return { success: false, audio: null }
+
+    try {
+      const cleanText = text.replace(
+        /[\u{1F600}-\u{1F6FF}]|[\u{2600}-\u{26FF}]/gu,
+        ''
+      ).trim()
+      if (!cleanText) return { success: false, audio: null }
+
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 15000)
+
+      const response = await fetch(
+        `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+        {
+          method: 'POST',
+          headers: {
+            'xi-api-key': ELEVENLABS_API_KEY,
+            'Content-Type': 'application/json',
+            'Accept': 'audio/mpeg',
+          },
+          signal: controller.signal,
+          body: JSON.stringify({
+            text: cleanText,
+            model_id: 'eleven_turbo_v2_5',
+            voice_settings: {
+              stability: 0.5,
+              similarity_boost: 0.75,
+              style: 0.4,
+              use_speaker_boost: true,
+            },
+          }),
+        }
+      )
+
+      clearTimeout(timeout)
+
+      if (!response.ok) {
+        console.warn('[TTS] ElevenLabs error:', response.status, await response.text().catch(() => ''))
+        return { success: false, audio: null }
+      }
+
+      const buffer = await response.arrayBuffer()
+      const base64 = Buffer.from(buffer).toString('base64')
+      return { success: true, audio: `data:audio/mpeg;base64,${base64}` }
+    } catch (err: any) {
+      console.warn('[TTS] ElevenLabs failed:', err?.message || err)
+      return { success: false, audio: null }
+    }
+  })
+
   // === GEMINI BRIDGE ===
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
   const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=${GEMINI_API_KEY}`
 
-  ipcMain.handle('send-to-ollama', async (_event, payload) => {
+  ipcMain.handle('send-to-gemini', async (_event, payload) => {
     try {
       const {
         triggerType,
@@ -67,6 +124,10 @@ export function registerIpcHandlers(win: BrowserWindow) {
       } = payload
 
       const systemPrompt = buildSystemPrompt(triggerType, ocrText, syllabusContext)
+
+      console.log('[LLM] triggerType:', triggerType)
+      console.log('[LLM] ocrText:', ocrText?.substring(0, 300))
+      console.log('[LLM] systemPrompt:', systemPrompt.substring(0, 500))
 
       // Convert conversation history — Gemini uses "model" not "assistant"
       // Also merge consecutive same-role turns (Gemini requires strict alternation)
@@ -102,6 +163,16 @@ export function registerIpcHandlers(win: BrowserWindow) {
         contents.unshift({ role: 'user', parts: [{ text: systemPrompt }] })
       }
 
+      const geminiPayload = {
+        contents,
+        generationConfig: {
+          temperature: 1,
+          maxOutputTokens: 200,
+          topP: 0.9,
+        },
+      }
+      console.log('[LLM] Full Gemini payload:', JSON.stringify(geminiPayload, null, 2))
+
       const controller = new AbortController()
       const timeout = setTimeout(() => controller.abort(), 30000)
 
@@ -109,18 +180,12 @@ export function registerIpcHandlers(win: BrowserWindow) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
-        body: JSON.stringify({
-          contents,
-          generationConfig: {
-            temperature: 0.7,
-            maxOutputTokens: 200,
-            topP: 0.9,
-          },
-        }),
+        body: JSON.stringify(geminiPayload),
       })
 
       clearTimeout(timeout)
       const data = await response.json()
+      console.log('[LLM] Gemini response:', JSON.stringify(data).substring(0, 500))
 
       if (data.error) {
         console.error('[Gemini] API error:', data.error.message || JSON.stringify(data.error))
@@ -130,9 +195,17 @@ export function registerIpcHandlers(win: BrowserWindow) {
         }
       }
 
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text
       if (!text) {
         console.warn('[Gemini] No text in response:', JSON.stringify(data).substring(0, 500))
+      }
+      // Strip any internal reasoning prefixes the LLM might add
+      if (text) {
+        text = text
+          .replace(/^(Lumi|Response|Trigger|Note|Output|Message|Internal|Analysis)\s*[:：]\s*/i, '')
+          .replace(/^\*\*.*?\*\*\s*/m, '')  // Strip bold headers
+          .replace(/^#+\s+.*\n/m, '')        // Strip markdown headers
+          .trim()
       }
       return {
         success: true,
@@ -169,7 +242,11 @@ export function registerIpcHandlers(win: BrowserWindow) {
 
   // === WINDOW CONTROLS ===
   ipcMain.handle('set-click-through', (_event, enable: boolean) => {
-    win.setIgnoreMouseEvents(enable, { forward: true })
+    if (enable) {
+      win.setIgnoreMouseEvents(true, { forward: true })
+    } else {
+      win.setIgnoreMouseEvents(false)
+    }
   })
 
   ipcMain.handle('resize-window', (_event, width: number, height: number) => {
@@ -333,33 +410,106 @@ function buildSystemPrompt(
   ocrText: string,
   syllabusContext?: string
 ): string {
-  const base = `You are Lumi, a warm, empathetic AI study companion designed for neurodivergent students (ADHD, Autism, Dyslexia). You live as an animated character on the student's desktop.
+  const base = `You are Lumi, an AI study companion that lives on a student's desktop as a small animated character. You were built to help neurodivergent students (ADHD, Autism, Dyslexia) stay focused while studying.
 
-CRITICAL RULES:
-- Keep responses to 1-3 sentences maximum. You speak in chat bubbles — brevity is essential.
-- Be warm, encouraging, and never condescending or scolding.
-- Use casual, friendly language. You're a supportive friend, not a teacher.
-- If you reference course material, cite the specific topic.
-- If you're unsure about something, say so honestly.
-- Never generate information not grounded in the provided context.
-- Use occasional emoji sparingly (1 per message max).${syllabusContext ? `\n\nRELEVANT COURSE MATERIAL:\n${syllabusContext}` : ''}`
+HOW YOU WORK:
+- You monitor the student's screen in real-time: what app/window they have open, what's on screen (via OCR), and their eye gaze patterns.
+- Based on this data, you detect specific situations (called "triggers") and respond accordingly.
+- You speak through small chat bubbles overlaid on their screen. You are NOT a full chatbot — you are a gentle, ambient companion.
+
+THE CURRENT TRIGGER TYPE IS: "${triggerType}"
+This is the MOST IMPORTANT piece of context. Your entire response must be shaped by this trigger type. Follow the trigger-specific instructions below EXACTLY.
+
+OUTPUT FORMAT:
+- Your response is displayed DIRECTLY to the student in a chat bubble. Output ONLY the message the student will see.
+- Do NOT include any internal reasoning, thoughts, analysis, labels, or metadata.
+- Do NOT prefix your response with things like "Trigger:", "Response:", "Lumi:", "Note:", etc.
+- Do NOT narrate what you're doing (e.g. "I'll now encourage the student..."). Just speak TO the student.
+- No markdown, no bullet points, no headers. Just plain conversational text.
+
+RESPONSE RULES:
+- 1-3 sentences MAXIMUM. You speak in chat bubbles — brevity is essential.
+- Warm, casual, friendly tone. You're a supportive friend, not a teacher or authority figure.
+- Never condescending, never scolding, never guilt-tripping.
+- 1 emoji max per message.
+- NEVER make up information. Only reference material if provided below.
+- NEVER ignore the trigger type. If the trigger says "distraction", your response MUST be about redirecting the student back to studying.${syllabusContext ? `\n\nRELEVANT COURSE MATERIAL:\n${syllabusContext}` : ''}`
 
   const triggerContexts: Record<string, string> = {
-    distraction: `The student just switched to a distracting app/website. GENTLY redirect them back to studying. Be encouraging about their progress. Never scold. Make them WANT to come back.\n\nContext: ${ocrText}`,
+    distraction: `TRIGGER: DISTRACTION DETECTED
+============================
+The student has LEFT their study material and opened a distracting app/website.
+Detected window: ${ocrText}
 
-    stuck: `The student has been staring at the same content for 40+ seconds without scrolling. They might be confused. Offer to help explain in simpler terms.\n\nContent they're stuck on: ${ocrText.substring(0, 500)}`,
+THIS IS NOT STUDY CONTENT. The student is procrastinating.
 
-    fatigue: `The student is showing signs of fatigue. Suggest a break and celebrate their progress.\n\nStudy context: ${ocrText.substring(0, 200)}`,
+ESCALATION: The context above includes which nudge number this is. Vary your tone accordingly:
+- Nudge #1: Light and playful. "Ooh, I see Instagram! But your notes miss you — let's go back?"
+- Nudge #2: A bit more direct but still friendly. "Hey, still on Instagram? You were on a roll earlier — let's not lose that momentum!"
+- Nudge #3+: More urgent, appeal to their goals. "Okay real talk — you've been here a while now. Your future self will thank you for closing this. Let's crush that next section!"
+IMPORTANT: Each nudge MUST feel different from the last. Never repeat the same message. Be creative.
 
-    wandering: `The student's gaze has wandered off screen for a while. Gently bring their attention back.\n\nLast content: ${ocrText.substring(0, 200)}`,
+YOUR RESPONSE MUST:
+1. Acknowledge what they opened
+2. Nudge them to close it and go back to studying
+3. Match the escalation level above
 
-    question: `The student is asking a direct question. Answer using ONLY the provided course context. If context doesn't contain the answer, say so honestly.\n\nScreen content: ${ocrText}`,
+YOUR RESPONSE MUST NOT:
+- Discuss, analyze, or engage with the content of the distracting app
+- Treat the distracting app as study material
+- Talk about any other topic
+- Ignore the distraction
+- Repeat a previous nudge message`,
 
-    session_start: `The student just started studying. Welcome them warmly and briefly. Keep it to 1-2 sentences.\n\nOpened: ${ocrText.substring(0, 100)}`,
+    stuck: `TRIGGER: STUDENT APPEARS STUCK
+The student has been staring at the same content for 40+ seconds without progress. They may be confused or overwhelmed.
 
-    session_end: `The study session is ending. Briefly summarize effort, praise it, and suggest next review. 2-3 sentences max.\n\nSession: ${ocrText.substring(0, 300)}`,
+Content on their screen:
+${ocrText.substring(0, 500)}
 
-    proactive_bridge: `The current material may require prerequisite knowledge. Proactively offer a quick refresher.\n\nCurrent topic: ${ocrText.substring(0, 300)}`,
+YOUR RESPONSE MUST:
+1. Acknowledge they might be stuck (without being patronizing)
+2. Offer to help break down the concept in simpler terms
+3. Reference the specific content they're looking at if possible`,
+
+    fatigue: `TRIGGER: FATIGUE DETECTED
+The student is showing signs of tiredness (high blink rate or long study session without breaks).
+
+Study context: ${ocrText.substring(0, 200)}
+
+YOUR RESPONSE MUST:
+1. Suggest taking a short break
+2. Celebrate how long they've been studying
+3. Be encouraging about their progress`,
+
+    wandering: `TRIGGER: ATTENTION WANDERING
+The student's gaze has been off-screen for a sustained period. They may be daydreaming or distracted by something in their environment.
+
+Last content on screen: ${ocrText.substring(0, 200)}
+
+YOUR RESPONSE MUST:
+1. Gently bring their attention back to the screen
+2. Be light and playful, not demanding`,
+
+    question: `TRIGGER: STUDENT QUESTION
+The student is asking you a direct question. Answer helpfully using ONLY the provided course context. If the context doesn't contain the answer, say so honestly.
+
+Screen content: ${ocrText}`,
+
+    session_start: `TRIGGER: SESSION START
+The student just started a new study session. Welcome them warmly in 1-2 sentences.
+
+What they opened: ${ocrText.substring(0, 100)}`,
+
+    session_end: `TRIGGER: SESSION END
+The study session is ending. Briefly summarize their effort, praise them, and suggest when to review next. 2-3 sentences max.
+
+Session info: ${ocrText.substring(0, 300)}`,
+
+    proactive_bridge: `TRIGGER: PREREQUISITE KNOWLEDGE GAP
+The current material may require background knowledge the student might not have. Proactively offer a quick refresher.
+
+Current topic: ${ocrText.substring(0, 300)}`,
   }
 
   const ctx = triggerContexts[triggerType] || triggerContexts.question

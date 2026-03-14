@@ -7,14 +7,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Screenshot capture
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
 
-  // Ollama communication
-  sendToOllama: (payload: {
+  // Gemini communication
+  sendToGemini: (payload: {
     triggerType: string
     ocrText: string
     userQuestion?: string
     conversationHistory: Array<{ role: string; content: string }>
     syllabusContext?: string
-  }) => ipcRenderer.invoke('send-to-ollama', payload),
+  }) => ipcRenderer.invoke('send-to-gemini', payload),
 
   // MCP syllabus search
   searchSyllabus: (query: string) => ipcRenderer.invoke('search-syllabus', query),
@@ -29,6 +29,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Session persistence
   saveSession: (data: any) => ipcRenderer.invoke('save-session', data),
   loadSession: () => ipcRenderer.invoke('load-session'),
+
+  // ElevenLabs TTS
+  textToSpeech: (text: string) => ipcRenderer.invoke('text-to-speech', text) as Promise<{ success: boolean; audio: string | null }>,
 
   // Drag & drop zone
   startDrag: (mouseX: number, mouseY: number) => ipcRenderer.invoke('start-drag', mouseX, mouseY),
