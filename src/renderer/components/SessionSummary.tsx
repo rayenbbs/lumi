@@ -25,16 +25,24 @@ export default function SessionSummary({ stats, focusScore, onClose }: Props) {
       initial={{ opacity: 0 }}
       animate={{ opacity: 1 }}
       exit={{ opacity: 0 }}
-      className="fixed inset-0 z-50 flex items-end justify-center p-4"
-      style={{ background: 'rgba(10, 5, 25, 0.85)' }}
+      className="fixed inset-0 z-[100] flex items-center justify-center p-4 no-drag"
+      style={{ background: 'rgba(10, 5, 25, 0.92)' }}
     >
       <motion.div
         initial={{ y: 50, opacity: 0 }}
         animate={{ y: 0, opacity: 1 }}
         exit={{ y: 50, opacity: 0 }}
         transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-        className="w-full max-w-sm glass rounded-2xl p-6 mb-4"
+        className="w-full max-w-sm glass rounded-2xl p-6 relative"
       >
+        {/* X close button (top-right) */}
+        <button
+          onClick={onClose}
+          className="no-drag absolute top-3 right-3 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/50 hover:text-white transition-colors"
+        >
+          ✕
+        </button>
+
         {/* Header */}
         <div className="text-center mb-6">
           <div className="text-5xl mb-2">🎉</div>

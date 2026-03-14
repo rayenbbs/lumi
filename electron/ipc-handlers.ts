@@ -52,7 +52,7 @@ export function registerIpcHandlers(win: BrowserWindow) {
 
   // === GEMINI BRIDGE ===
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
-  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`
+  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=${GEMINI_API_KEY}`
 
   ipcMain.handle('send-to-ollama', async (_event, payload) => {
     try {
@@ -93,9 +93,11 @@ export function registerIpcHandlers(win: BrowserWindow) {
         }
       }
 
-      // Gemini contents must start with a user turn
-      if (contents.length > 0 && contents[0].role !== 'user') {
-        contents.unshift({ role: 'user', parts: [{ text: '(context)' }] })
+      // Prepend system prompt into the first user turn (Gemma doesn't support system_instruction)
+      if (contents.length > 0 && contents[0].role === 'user') {
+        contents[0].parts[0].text = systemPrompt + '\n\n' + contents[0].parts[0].text
+      } else {
+        contents.unshift({ role: 'user', parts: [{ text: systemPrompt }] })
       }
 
       const controller = new AbortController()
@@ -106,7 +108,6 @@ export function registerIpcHandlers(win: BrowserWindow) {
         headers: { 'Content-Type': 'application/json' },
         signal: controller.signal,
         body: JSON.stringify({
-          system_instruction: { parts: [{ text: systemPrompt }] },
           contents,
           generationConfig: {
             temperature: 0.7,

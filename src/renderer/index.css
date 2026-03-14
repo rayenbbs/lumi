@@ -16,7 +16,6 @@ body,
   height: 100%;
   background: transparent !important;
   overflow: hidden;
-  user-select: none;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
 }
 
@@ -40,6 +39,12 @@ body,
   -webkit-app-region: no-drag;
 }
 
+/* Allow text selection in inputs */
+.select-text {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 /* Lumi character glow */
 .lumi-glow {
   filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6));
@@ -60,18 +65,25 @@ body,
   border: 1px solid rgba(139, 92, 246, 0.2);
 }
 
-/* Button background helpers (Tailwind 3 doesn't generate /8 or /12 opacity by default) */
-.bg-white\/8 {
-  background-color: rgba(255, 255, 255, 0.08);
+/* Reusable button style */
+.lumi-btn {
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.12);
 }
-.hover\:bg-white\/12:hover {
-  background-color: rgba(255, 255, 255, 0.12);
+.lumi-btn:hover {
+  background: rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.85);
+  border-color: rgba(255, 255, 255, 0.2);
 }
-.hover\:bg-red-500\/15:hover {
-  background-color: rgba(239, 68, 68, 0.15);
-}
-.hover\:bg-purple-500\/15:hover {
-  background-color: rgba(139, 92, 246, 0.15);
+
+/* Background panel when session active */
+.lumi-bg-panel {
+  background: rgba(15, 10, 30, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  pointer-events: none;
 }
 
 /* Gaze cursor dot — follows eye position on screen */

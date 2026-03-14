@@ -475,7 +475,6 @@ export default function App() {
     const text = inputText.trim()
     if (!text) return
     setInputText('')
-    setShowInput(false)
     if (lumiState === 'sleeping') {
       startSession()
     }
@@ -505,134 +504,93 @@ export default function App() {
   const isActive = lumiState !== 'sleeping'
 
   return (
-    <div className="w-full h-full relative select-none overflow-hidden flex flex-col">
+    <div className="w-full h-full relative overflow-hidden flex flex-col">
 
-      {/* Calibration overlay */}
+      {/* ── FULLSCREEN OVERLAYS ── */}
       <AnimatePresence>
         {showCalibration && (
-          <CalibrationOverlay
-            onComplete={onCalibrationDone}
-            onSkip={onCalibrationSkip}
-          />
+          <CalibrationOverlay onComplete={onCalibrationDone} onSkip={onCalibrationSkip} />
         )}
       </AnimatePresence>
-
-      {/* Bionic reader overlay */}
       <AnimatePresence>
         {showBionicReader && (
-          <BionicReader
-            text={lastOCRText}
-            gazePosition={gazePosition}
-            onClose={() => setShowBionicReader(false)}
-          />
+          <BionicReader text={lastOCRText} gazePosition={gazePosition} onClose={() => setShowBionicReader(false)} />
         )}
       </AnimatePresence>
-
-      {/* Session summary overlay */}
       <AnimatePresence>
         {showSessionSummary && sessionStats && (
           <SessionSummary
             stats={sessionStats}
             focusScore={focusScore}
-            onClose={() => {
-              setShowSessionSummary(false)
-              setLumiState('sleeping')
-              clearMessages()
-            }}
+            onClose={() => { setShowSessionSummary(false); setLumiState('sleeping'); clearMessages() }}
           />
         )}
       </AnimatePresence>
 
-      {/* ── BACKGROUND PANEL (visible when session is active) ── */}
-      <AnimatePresence>
-        {isActive && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="absolute inset-0 rounded-2xl glass pointer-events-none z-0"
-          />
-        )}
-      </AnimatePresence>
+      {/* ── BACKGROUND PANEL ── */}
+      {isActive && <div className="lumi-bg-panel absolute inset-0 rounded-2xl z-0" />}
 
-      {/* ── TOP BAR ── */}
-      <div className="relative z-10 flex items-center px-3 pt-2 pb-1">
-        {/* Drag handle (left side) */}
-        <div className="drag-region flex-1 h-8 cursor-move" />
+      {/* ── DRAG HANDLE (invisible, top strip) ── */}
+      <div className="drag-region h-6 shrink-0 z-10" />
 
-        {/* Status dots */}
-        <div className="flex items-center gap-2 no-drag mr-1">
+      {/* ── TOP ROW: status dots + action buttons ── */}
+      <div className="no-drag relative z-30 px-3 pb-2 flex items-center justify-between shrink-0">
+        {/* Status dots (left) */}
+        <div className="flex items-center gap-2.5">
           <OllamaIndicator status={ollamaStatus} />
           <EyeIndicator status={eyeStatus} />
           <MicIndicator status={micStatus} />
         </div>
-      </div>
 
-      {/* ── ACTION BUTTONS (below top bar, only when session active) ── */}
-      <AnimatePresence>
+        {/* Action buttons (right) */}
         {isActive && (
-          <motion.div
-            initial={{ opacity: 0, y: -6 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -6 }}
-            transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-            className="relative z-10 flex items-center justify-center gap-2 px-3 pb-2 no-drag"
-          >
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => setShowInput(!showInput)}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+              className={`no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
                 showInput
-                  ? 'bg-purple-500/30 text-purple-300 border border-purple-400/30'
-                  : 'bg-white/8 text-white/50 hover:text-white/80 hover:bg-white/12 border border-white/10'
+                  ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
+                  : 'lumi-btn'
               }`}
-              title="Type a question"
             >
-              <span className="text-sm">⌨</span> Ask
+              Ask
             </button>
-
             <button
               onClick={() => setShowBionicReader(!showBionicReader)}
-              className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg transition-all ${
+              className={`no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
                 showBionicReader
-                  ? 'bg-purple-500/30 text-purple-300 border border-purple-400/30'
-                  : 'bg-white/8 text-white/50 hover:text-white/80 hover:bg-white/12 border border-white/10'
+                  ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
+                  : 'lumi-btn'
               }`}
-              title="Bionic Reading Mode"
             >
-              <span className="text-sm font-bold">Aa</span> Read
+              Read
             </button>
-
             <button
               onClick={stopSession}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/8 text-white/50 hover:text-red-400 hover:bg-red-500/15 hover:border-red-400/30 border border-white/10 transition-all"
-              title="End session"
+              className="no-drag cursor-pointer text-xs px-2.5 py-1 rounded-md lumi-btn hover:!text-red-400 hover:!border-red-400/30"
             >
-              <span className="text-sm">⏹</span> End
+              End
             </button>
-          </motion.div>
+          </div>
         )}
-      </AnimatePresence>
+      </div>
 
       {/* ── CHAT MESSAGES ── */}
-      <div className="flex-1 relative z-10 min-h-0">
+      <div className="flex-1 relative z-20 min-h-0 no-drag">
         <AnimatePresence>
           {isExpanded && messages.length > 0 && (
             <motion.div
               key="chat-panel"
-              initial={{ opacity: 0, y: 15 }}
+              initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: 15 }}
+              exit={{ opacity: 0, y: 10 }}
               transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-              className="absolute inset-x-3 bottom-0 top-0 overflow-y-auto flex flex-col gap-2 no-drag"
+              className="absolute inset-x-3 bottom-0 top-0 overflow-y-auto flex flex-col gap-2"
             >
-              {/* Spacer pushes messages to bottom */}
               <div className="flex-1" />
-
               {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
                 <ChatBubble key={msg.id} message={msg} />
               ))}
-
               {isThinking && (
                 <motion.div
                   initial={{ opacity: 0, scale: 0.9 }}
@@ -652,7 +610,6 @@ export default function App() {
                   </div>
                 </motion.div>
               )}
-
               <div ref={messagesEndRef} />
             </motion.div>
           )}
@@ -660,66 +617,46 @@ export default function App() {
       </div>
 
       {/* ── TEXT INPUT ── */}
-      <AnimatePresence>
-        {showInput && (
-          <motion.div
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 10 }}
-            className="relative z-10 px-3 pb-2 no-drag"
-          >
-            <form onSubmit={handleInputSubmit} className="flex gap-2">
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                placeholder="Ask Lumi anything..."
-                autoFocus
-                className="flex-1 glass rounded-xl px-3 py-2.5 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
-              />
-              <button
-                type="submit"
-                className="glass rounded-xl px-4 py-2.5 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
-              >
-                ↑
-              </button>
-            </form>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {showInput && (
+        <div className="no-drag relative z-30 px-3 pb-2 shrink-0">
+          <form onSubmit={handleInputSubmit} className="flex gap-2">
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => setInputText(e.target.value)}
+              placeholder="Ask Lumi anything..."
+              autoFocus
+              className="flex-1 select-text glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
+            />
+            <button
+              type="submit"
+              className="no-drag cursor-pointer glass rounded-xl px-4 py-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
+            >
+              Send
+            </button>
+          </form>
+        </div>
+      )}
 
       {/* ── GAZE DOT ── */}
       {eyeStatus === 'active' && gazePosition && (
-        <div
-          className="gaze-cursor"
-          style={{ left: gazePosition.x, top: gazePosition.y }}
-        />
+        <div className="gaze-cursor" style={{ left: gazePosition.x, top: gazePosition.y }} />
       )}
 
       {/* ── LUMI CHARACTER + LABEL ── */}
-      <div className="relative z-10 flex flex-col items-center gap-1 pb-3 pt-1">
+      <div className="no-drag relative z-20 flex flex-col items-center gap-1 pb-3 pt-1 shrink-0">
         <LumiCharacter
           state={lumiState}
           isThinking={isThinking}
           onClick={handleCharacterClick}
         />
-
-        <motion.div
-          initial={false}
-          animate={{ opacity: lumiState === 'sleeping' ? 1 : 0.7 }}
-          className="text-center"
-        >
-          {lumiState === 'sleeping' ? (
-            <p className="text-white/60 text-xs">Click Lumi to start studying</p>
-          ) : (
-            <p className="text-white/40 text-[10px]">
-              {lumiState === 'watching' && 'Watching over you...'}
-              {lumiState === 'intervening' && 'Lumi has a message'}
-              {lumiState === 'chatting' && 'Chatting with you'}
-              {lumiState === 'break' && 'Enjoy your break!'}
-            </p>
-          )}
-        </motion.div>
+        <p className={`text-center text-[11px] ${isActive ? 'text-white/40' : 'text-white/60'}`}>
+          {lumiState === 'sleeping' && 'Click Lumi to start studying'}
+          {lumiState === 'watching' && 'Watching over you...'}
+          {lumiState === 'intervening' && 'Lumi has a message'}
+          {lumiState === 'chatting' && 'Chatting with you'}
+          {lumiState === 'break' && 'Enjoy your break!'}
+        </p>
       </div>
     </div>
   )

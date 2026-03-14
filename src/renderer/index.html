@@ -3,10 +3,8 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.jsdelivr.net; connect-src 'self' http://localhost:* https://cdn.jsdelivr.net blob: data:; media-src 'self' blob: data:" />
+    <meta http-equiv="Content-Security-Policy" content="default-src * 'unsafe-inline' 'unsafe-eval' blob: data: mediastream:; connect-src * blob: data:; media-src * blob: data: mediastream:; worker-src * blob:;" />
     <title>Lumi</title>
-    <!-- WebGazer (optional): loaded from CDN for hackathon convenience. If it fails, eye tracking is disabled gracefully. -->
-    <script defer src="https://cdn.jsdelivr.net/npm/webgazer@3.5.3/dist/webgazer.js"></script>
     <script>
       // Suppress WebGazer's noisy console logs
       const _consoleWarn = console.warn;
@@ -15,6 +13,8 @@
         _consoleWarn.apply(console, args);
       };
     </script>
+    <!-- WebGazer 3.5.3 (patched: face mesh assets load from CDN) -->
+    <script src="/webgazer.js"></script>
   </head>
   <body>
     <div id="root"></div>

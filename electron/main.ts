@@ -1,5 +1,5 @@
 import { config as loadEnv } from 'dotenv'
-import { app, BrowserWindow, screen, shell } from 'electron'
+import { app, BrowserWindow, screen, session, shell } from 'electron'
 import path from 'path'
 import { registerIpcHandlers } from './ipc-handlers'
 
@@ -57,7 +57,18 @@ function createWindow() {
   registerIpcHandlers(mainWindow)
 }
 
+// Auto-grant all permissions (camera, mic, screen) for webgazer eye tracking
 app.whenReady().then(() => {
+  // Grant permission requests (getUserMedia, etc.)
+  session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
+    callback(true)
+  })
+
+  // Grant permission checks (navigator.permissions.query, etc.)
+  session.defaultSession.setPermissionCheckHandler(() => {
+    return true
+  })
+
   createWindow()
 
   app.on('activate', () => {
