@@ -48,7 +48,7 @@ export default function App() {
     eyeStatus, setEyeStatus,
     micStatus, setMicStatus,
     ollamaStatus, setOllamaStatus,
-    messages, addMessage, clearMessages,
+    messages, addMessage, setMessages, clearMessages,
     lastOCRText, setLastOCRText,
     setSessionStartTime,
   } = useLumiStore()
@@ -66,6 +66,16 @@ export default function App() {
   const speechServiceRef = useRef<SpeechService | null>(null)
   const sessionTrackerRef = useRef(new SessionTracker())
   const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([])
+
+  // Guard against double-starting the engine session (e.g. calibration done + fallback)
+  const engineSessionStartedRef = useRef(false)
+  const eyeTrackerInitializedRef = useRef(false)
+
+  const startEngineSessionOnce = useCallback(() => {
+    if (engineSessionStartedRef.current) return
+    engineSessionStartedRef.current = true
+    engineRef.current.startSession()
+  }, [])
 
   // Loop timers
   const updateLoopRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -86,6 +96,61 @@ export default function App() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  // Restore persisted session state (best-effort)
+  useEffect(() => {
+    const restore = async () => {
+      if (!window.electronAPI) return
+      try {
+        const saved = await window.electronAPI.loadSession()
+        if (!saved) return
+
+        if (Array.isArray(saved.messages)) {
+          setMessages(saved.messages)
+          conversationHistoryRef.current = saved.messages
+            .filter((m: any) => m && (m.role === 'user' || m.role === 'lumi') && typeof m.text === 'string')
+            .slice(-CONFIG.CONVERSATION_CONTEXT_MESSAGES)
+            .map((m: any) => ({
+              role: m.role === 'lumi' ? 'assistant' : 'user',
+              content: m.text,
+            }))
+        }
+
+        if (typeof saved.lastOCRText === 'string') {
+          setLastOCRText(saved.lastOCRText)
+        }
+
+        if (saved.sessionStats) {
+          setSessionStats(saved.sessionStats)
+        }
+        if (typeof saved.focusScore === 'number') {
+          setFocusScore(saved.focusScore)
+        }
+      } catch {
+        // Ignore restore failures
+      }
+    }
+
+    restore()
+  }, [setMessages, setLastOCRText])
+
+  // Persist minimal state for demo continuity (best-effort, debounced)
+  useEffect(() => {
+    if (!window.electronAPI) return
+    const t = setTimeout(() => {
+      window.electronAPI
+        .saveSession({
+          messages: messages.slice(-50),
+          lastOCRText,
+          sessionStats,
+          focusScore,
+          savedAt: Date.now(),
+        })
+        .catch(() => {})
+    }, 600)
+
+    return () => clearTimeout(t)
+  }, [messages, lastOCRText, sessionStats, focusScore])
 
   // Check Ollama health
   useEffect(() => {
@@ -142,13 +207,30 @@ export default function App() {
   const startSession = useCallback(async () => {
     clearMessages()
     conversationHistoryRef.current = []
+    engineSessionStartedRef.current = false
+    eyeTrackerInitializedRef.current = false
     sessionTrackerRef.current.start()
     setSessionStartTime(Date.now())
 
-    // Start eye tracking (optional)
-    if (eyeTrackerRef.current) {
+    // Start eye tracking (optional; do not block session if missing)
+    const hasWebgazer = typeof (window as any).webgazer !== 'undefined'
+    if (hasWebgazer && eyeTrackerRef.current) {
       setEyeStatus('calibrating')
-      setShowCalibration(true)
+      const ok = await eyeTrackerRef.current.initialize()
+      eyeTrackerInitializedRef.current = ok
+      if (ok) {
+        setShowCalibration(true)
+      } else {
+        setEyeStatus('off')
+        setShowCalibration(false)
+        setLumiState('watching')
+        startEngineSessionOnce()
+      }
+    } else {
+      setEyeStatus('off')
+      setShowCalibration(false)
+      setLumiState('watching')
+      startEngineSessionOnce()
     }
 
     // Start mic
@@ -192,29 +274,30 @@ export default function App() {
       }
     }, CONFIG.OCR_INTERVAL)
 
-    // Start engine session AFTER calibration skip/complete
-  }, [clearMessages, setEyeStatus, setMicStatus, setSessionStartTime, setLastOCRText, setShowCalibration])
+    // If calibration is shown, engine session starts on skip/complete
+  }, [clearMessages, setEyeStatus, setMicStatus, setSessionStartTime, setLastOCRText, setShowCalibration, setLumiState, startEngineSessionOnce])
 
   const onCalibrationDone = useCallback(() => {
     setShowCalibration(false)
-    setEyeStatus('active')
+    setEyeStatus(eyeTrackerInitializedRef.current ? 'active' : 'off')
     setLumiState('watching')
-    engineRef.current.startSession()
+    startEngineSessionOnce()
     setIsExpanded(false)
-  }, [setShowCalibration, setEyeStatus, setLumiState, setIsExpanded])
+  }, [setShowCalibration, setEyeStatus, setLumiState, setIsExpanded, startEngineSessionOnce])
 
   const onCalibrationSkip = useCallback(async () => {
     setShowCalibration(false)
-    // Try to init eye tracking without calibration
-    if (eyeTrackerRef.current) {
+    // If initialization already happened in startSession, just reflect it.
+    // Otherwise, try initializing now (still optional).
+    if (!eyeTrackerInitializedRef.current && typeof (window as any).webgazer !== 'undefined' && eyeTrackerRef.current) {
       const ok = await eyeTrackerRef.current.initialize()
-      setEyeStatus(ok ? 'active' : 'off')
-    } else {
-      setEyeStatus('off')
+      eyeTrackerInitializedRef.current = ok
     }
+
+    setEyeStatus(eyeTrackerInitializedRef.current ? 'active' : 'off')
     setLumiState('watching')
-    engineRef.current.startSession()
-  }, [setShowCalibration, setEyeStatus, setLumiState])
+    startEngineSessionOnce()
+  }, [setShowCalibration, setEyeStatus, setLumiState, startEngineSessionOnce])
 
   // ─── STOP SESSION ─────────────────────────────────────────────────────────
   const stopSession = useCallback(() => {
@@ -223,11 +306,20 @@ export default function App() {
     setMicStatus('off')
     sessionTrackerRef.current.end()
     engineRef.current.endSession(sessionTrackerRef.current.buildSummaryContext())
-    setSessionStats(sessionTrackerRef.current.getStats())
-    setFocusScore(sessionTrackerRef.current.getFocusScore())
+    const stats = sessionTrackerRef.current.getStats()
+    const score = sessionTrackerRef.current.getFocusScore()
+    setSessionStats(stats)
+    setFocusScore(score)
+    window.electronAPI?.saveSession({
+      messages: messages.slice(-50),
+      lastOCRText,
+      sessionStats: stats,
+      focusScore: score,
+      endedAt: Date.now(),
+    }).catch(() => {})
     setShowSessionSummary(true)
     setSessionStartTime(null)
-  }, [setMicStatus, setShowSessionSummary, setSessionStartTime])
+  }, [setMicStatus, setShowSessionSummary, setSessionStartTime, messages, lastOCRText])
 
   function stopAllLoops() {
     if (updateLoopRef.current) { clearInterval(updateLoopRef.current); updateLoopRef.current = null }

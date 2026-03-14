@@ -9,8 +9,7 @@
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "mcp:dev": "cd mcp-server && npx ts-node index.ts",
-    "mcp:start": "cd mcp-server && node dist/index.js"
+    "mcp:start": "cd mcp-server && node index.js"
   },
   "dependencies": {
     "active-win": "^8.1.0",
@@ -27,7 +26,7 @@
     "@types/react": "^18.2.0",
     "@types/react-dom": "^18.2.0",
     "@vitejs/plugin-react": "^4.0.0",
-    "autoprefixer": "^10.4.0",
+    "autoprefixer": "10.4.19",
     "electron": "^29.0.0",
     "electron-builder": "^24.0.0",
     "electron-vite": "^2.0.0",

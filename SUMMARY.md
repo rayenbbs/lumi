@@ -2,7 +2,7 @@
 
 ## What Was Built
 
-The full project is at `C:/Users/rayen/Desktop/SMU Hack/lumi/` and builds cleanly.
+This project builds cleanly.
 
 ### 38 files across:
 
@@ -26,7 +26,7 @@ The full project is at `C:/Users/rayen/Desktop/SMU Hack/lumi/` and builds cleanl
 ollama pull llama3.2:3b
 
 # 2. Start everything (Windows)
-cd "C:/Users/rayen/Desktop/SMU Hack/lumi"
+cd "<your-path>/lumi"
 start-demo.bat
 
 # Or manually:
@@ -44,8 +44,8 @@ Drop any `.pdf` files into `mcp-server/data/courses/` — the MCP server auto-in
 
 ## What Needs Attention Before Demo
 
-1. **WebGazer**: Download `webgazer.js` from https://webgazer.cs.brown.edu/webgazer.js and place in `src/renderer/public/` for eye tracking. App works without it (graceful degradation).
+1. **WebGazer (optional)**: Eye tracking is optional. The app attempts to load WebGazer from jsDelivr; if it fails (e.g., offline), Lumi still runs with eye tracking disabled.
 
 2. **Lottie animations**: Replace placeholder `.json` files in `assets/lottie/` with real animations from lottiefiles.com (search "cute robot"). App falls back to animated emojis without them.
 
-3. **Sound effects**: Add `nudge.mp3`, `celebrate.mp3`, `break-time.mp3` to `src/renderer/public/sounds/`.
+3. **Sound effects (optional)**: Add `nudge.mp3`, `celebrate.mp3`, `break-time.mp3` to `src/renderer/public/sounds/`.
