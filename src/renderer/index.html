@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' blob: data: https://cdn.jsdelivr.net; connect-src 'self' http://localhost:* https://cdn.jsdelivr.net blob: data:; media-src 'self' blob: data:" />
+    <title>Lumi</title>
+    <!-- WebGazer: load from CDN for dev; use local file in prod -->
+    <script>
+      // Suppress WebGazer's noisy console logs
+      const _consoleWarn = console.warn;
+      console.warn = (...args) => {
+        if (args[0] && typeof args[0] === 'string' && args[0].includes('webgazer')) return;
+        _consoleWarn.apply(console, args);
+      };
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./main.tsx"></script>
+  </body>
+</html>

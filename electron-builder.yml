@@ -1,0 +1,33 @@
+appId: com.lumi.study
+productName: Lumi
+copyright: Copyright 2024 Lumi
+
+directories:
+  buildResources: resources
+  output: dist
+
+files:
+  - out/**/*
+  - mcp-server/**/*
+  - assets/**/*
+  - "!**/.git"
+  - "!**/node_modules/.cache"
+
+win:
+  target:
+    - nsis
+  icon: resources/icon.ico
+
+mac:
+  target:
+    - dmg
+  icon: resources/icon.icns
+  category: public.app-category.education
+  darkModeSupport: true
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+
+publish: null

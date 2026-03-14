@@ -1,0 +1,7 @@
+node_modules/
+out/
+dist/
+.env
+*.log
+mcp-server/node_modules/
+mcp-server/dist/
