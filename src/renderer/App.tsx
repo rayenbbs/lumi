@@ -11,7 +11,7 @@ import { useLumiStore, ChatMessage, ChatAttachment } from './store/lumi-store'
 import LumiCharacter from './components/LumiCharacter'
 import ChatBubble from './components/ChatBubble'
 import { MicIndicator, OllamaIndicator } from './components/StatusIndicator'
-import BionicReader from './components/BionicReader'
+
 import SessionSummary from './components/SessionSummary'
 import CalibrationOverlay from './components/CalibrationOverlay'
 import PlatformPanel from './components/PlatformPanel'
@@ -77,7 +77,6 @@ export default function App() {
     lumiState, setLumiState,
     isExpanded, setIsExpanded,
     isThinking, setIsThinking,
-    showBionicReader, setShowBionicReader,
     showSessionSummary, setShowSessionSummary,
     sttEnabled, setSttEnabled,
     micStatus, setMicStatus,
@@ -832,14 +831,7 @@ export default function App() {
   return (
     <div className="w-full h-full relative overflow-hidden pointer-events-none">
 
-      {/* ── FULLSCREEN OVERLAYS (calibration, bionic reader, session summary) ── */}
-      <AnimatePresence>
-        {showBionicReader && (
-          <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
-            <BionicReader text={lastOCRText} onClose={() => setShowBionicReader(false)} />
-          </div>
-        )}
-      </AnimatePresence>
+      {/* ── FULLSCREEN OVERLAYS ── */}
       <AnimatePresence>
         {showSessionSummary && sessionStats && (
           <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
@@ -905,19 +897,6 @@ export default function App() {
               </div>
               <div className="flex items-center gap-1">
                 <button
-                  onClick={() => setShowBionicReader(!showBionicReader)}
-                  className={`cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
-                    showBionicReader
-                      ? 'bg-purple-500/20 text-purple-300'
-                      : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]'
-                  }`}
-                  title="Bionic Reader"
-                >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                    <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-                  </svg>
-                </button>
-                <button
                   onClick={() => setShowSettings(!showSettings)}
                   className={`cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
                     showSettings
@@ -955,7 +934,7 @@ export default function App() {
             {/* Tab strip — clean */}
             <div className="relative z-10 px-5 pb-3 shrink-0">
               <div className="flex gap-1 rounded-xl bg-white/[0.03] p-1">
-                {(['platform', 'chat', 'session'] as SideTab[]).map((tab) => (
+                {(['chat', 'platform', 'session'] as SideTab[]).map((tab) => (
                   <button
                     key={tab}
                     onClick={() => { setActiveTab(tab); setShowSettings(false) }}
@@ -1054,8 +1033,8 @@ export default function App() {
               </AnimatePresence>
             </div>
 
-            {/* Chat input */}
-            <div className="relative z-10 px-5 py-3 shrink-0">
+            {/* Chat input — only visible on chat tab */}
+            {activeTab === 'chat' && <div className="relative z-10 px-5 py-3 shrink-0">
               {pendingAttachments.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {pendingAttachments.map((file) => (
@@ -1112,7 +1091,7 @@ export default function App() {
                   Send
                 </button>
               </form>
-            </div>
+            </div>}
           </motion.div>
         )}
       </AnimatePresence>
