@@ -9,7 +9,7 @@
     "preview": "electron-vite preview",
     "build:win": "npm run build && electron-builder --win",
     "build:mac": "npm run build && electron-builder --mac",
-    "mcp:start": "cd mcp-server && node index.js"
+    "mcp:install": "cd mcp-server && npm install"
   },
   "dependencies": {
     "@napi-rs/canvas": "^0.1.96",

@@ -1,20 +1,15 @@
 {
   "name": "lumi-mcp-server",
   "version": "1.0.0",
-  "description": "Lumi MCP server for course material indexing and retrieval",
+  "description": "Lumi MCP server — course indexing, syllabus search, and LLM chat via Model Context Protocol",
   "main": "index.js",
   "type": "module",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.0.0",
-    "pdf-parse": "^1.1.1"
-  },
-  "devDependencies": {
-    "@types/node": "^20.0.0",
-    "@types/pdf-parse": "^1.1.4",
-    "ts-node": "^10.9.0",
-    "typescript": "^5.3.0"
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "pdf-parse": "^1.1.1",
+    "zod": "^3.23.0"
   }
 }

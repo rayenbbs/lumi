@@ -3,6 +3,7 @@ import { app, BrowserWindow, screen, session, shell } from 'electron'
 import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { registerIpcHandlers } from './ipc-handlers'
+import { getMcpClient, shutdownMcpClient } from './mcp-client'
 
 loadEnv()
 
@@ -10,9 +11,9 @@ export let mainWindow: BrowserWindow | null = null
 let pythonProcess: ChildProcess | null = null
 
 function spawnPythonServer() {
-  const pythonPath = 'python' // Note: This assumes python is in PATH and has dependencies installed
+  const pythonPath = 'python'
   const scriptDir = path.join(__dirname, '../../Driver-State-Detection/driver_state_detection')
-  
+
   const args = ['main.py']
   const debugRequested = process.env.LUMI_DRIVER_DEBUG === '1'
   const isDevMode = process.env.NODE_ENV === 'development' || process.env.VITE_DEV_SERVER_URL !== undefined
@@ -22,7 +23,7 @@ function spawnPythonServer() {
 
   pythonProcess = spawn(pythonPath, args, {
     cwd: scriptDir,
-    stdio: 'inherit' // Pipe logs to Electron console so we can see what's happening
+    stdio: 'inherit',
   })
 
   pythonProcess.on('error', (err) => {
@@ -34,7 +35,6 @@ function spawnPythonServer() {
   })
 }
 
-
 function createWindow() {
   const { width, height } = screen.getPrimaryDisplay().workAreaSize
 
@@ -43,8 +43,6 @@ function createWindow() {
     y: 0,
     width,
     height,
-
-    // Transparent, frameless, always on top
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -52,23 +50,18 @@ function createWindow() {
     resizable: false,
     hasShadow: false,
     roundedCorners: false,
-
     focusable: true,
-
     webPreferences: {
       preload: path.join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // Needed for local file access (tesseract wasm)
+      webSecurity: false,
     },
   })
 
-  // Click-through on transparent areas, forward mouse events so we detect hover
   mainWindow.setIgnoreMouseEvents(true, { forward: true })
-
   mainWindow.setMenuBarVisibility(false)
 
-  // Open DevTools in dev mode
   if (process.env.NODE_ENV === 'development') {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL!)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
@@ -76,7 +69,6 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'))
   }
 
-  // Open external links in default browser
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
     return { action: 'deny' }
@@ -85,19 +77,23 @@ function createWindow() {
   registerIpcHandlers(mainWindow)
 }
 
-// Auto-grant all permissions (camera, mic, screen) for webgazer eye tracking
-app.whenReady().then(() => {
-  // Grant permission requests (getUserMedia, etc.)
+app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(true)
   })
-
-  // Grant permission checks (navigator.permissions.query, etc.)
   session.defaultSession.setPermissionCheckHandler(() => {
     return true
   })
 
   spawnPythonServer()
+
+  // Start the MCP server (non-blocking — app works without it)
+  getMcpClient().then(() => {
+    console.log('[Main] MCP server ready')
+  }).catch((err) => {
+    console.warn('[Main] MCP server failed to start (app will work without syllabus search):', err.message)
+  })
+
   createWindow()
 
   app.on('activate', () => {
@@ -109,9 +105,9 @@ app.whenReady().then(() => {
 
 app.on('will-quit', () => {
   if (pythonProcess) pythonProcess.kill()
+  shutdownMcpClient()
 })
 
 app.on('window-all-closed', () => {
   app.quit()
 })
-
