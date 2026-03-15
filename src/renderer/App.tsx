@@ -17,6 +17,7 @@ import CalibrationOverlay from './components/CalibrationOverlay'
 import PlatformPanel from './components/PlatformPanel'
 import MissionSprintBoard from './components/MissionSprintBoard'
 import SessionTimelinePanel, { TimelineEvent } from './components/SessionTimelinePanel'
+import SettingsPanel from './components/SettingsPanel'
 import { CONFIG } from './config/constants'
 import { SessionStats } from './services/session-tracker'
 import { setCustomDistractionPatterns } from './config/distractions'
@@ -39,9 +40,9 @@ interface BackendAttachmentResult {
 }
 
 const TAB_META: Record<SideTab, { label: string; icon: string }> = {
-  platform: { label: 'Platform', icon: '🧠' },
+  platform: { label: 'Tools', icon: '⚡' },
   chat: { label: 'Chat', icon: '💬' },
-  session: { label: 'Session', icon: '📈' },
+  session: { label: 'Stats', icon: '📊' },
 }
 
 declare global {
@@ -91,7 +92,8 @@ export default function App() {
   const [focusScore, setFocusScore] = useState(0)
   const [inputText, setInputText] = useState('')
   const [isSpeaking, setIsSpeaking] = useState(false)
-  const [activeTab, setActiveTab] = useState<SideTab>('platform')
+  const [activeTab, setActiveTab] = useState<SideTab>('chat')
+  const [showSettings, setShowSettings] = useState(false)
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
   const [mission, setMission] = useState('Finish one topic deeply, then self-test with a 3-question quiz')
   const [missionCompleted, setMissionCompleted] = useState(false)
@@ -864,15 +866,21 @@ export default function App() {
             onMouseLeave={handleMouseLeaveUI}
           >
             {/* Panel background */}
-            <div className="absolute inset-0 lumi-bg-panel rounded-l-2xl" style={{ pointerEvents: 'none' }} />
+            <div className="absolute inset-0 bg-[rgba(12,8,24,0.88)] backdrop-blur-2xl rounded-l-2xl border-l border-white/[0.06]" style={{ pointerEvents: 'none' }} />
 
-            {/* Top bar: status + actions */}
-            <div className="relative z-10 px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
-              <div className="flex items-center gap-2.5">
-                <OllamaIndicator status={ollamaStatus} />
-                <MicIndicator status={micStatus} />
-                <button
-                  onClick={() => {
+            {/* Settings Panel Overlay */}
+            <AnimatePresence>
+              {showSettings && (
+                <SettingsPanel
+                  onClose={() => setShowSettings(false)}
+                  customDistractingApps={customDistractingApps}
+                  customDistractingUrls={customDistractingUrls}
+                  onAddDistractingApp={addCustomDistractingApp}
+                  onRemoveDistractingApp={removeCustomDistractingApp}
+                  onAddDistractingUrl={addCustomDistractingUrl}
+                  onRemoveDistractingUrl={removeCustomDistractingUrl}
+                  sttEnabled={sttEnabled}
+                  onToggleSTT={() => {
                     const next = !sttEnabled
                     setSttEnabled(next)
                     if (next && speechServiceRef.current && lumiState !== 'sleeping') {
@@ -883,55 +891,80 @@ export default function App() {
                       setMicStatus('off')
                     }
                   }}
-                  className={`cursor-pointer text-[10px] px-1.5 py-0.5 rounded transition-all ${
-                    sttEnabled
-                      ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
-                      : 'lumi-btn'
-                  }`}
-                >
-                  STT
-                </button>
+                  sprintMinutes={sprintMinutes}
+                  onSprintMinutesChange={handleSprintMinutesChange}
+                />
+              )}
+            </AnimatePresence>
+
+            {/* Top bar: minimal */}
+            <div className="relative z-10 px-5 pt-4 pb-2 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-2">
+                <OllamaIndicator status={ollamaStatus} />
+                {sttEnabled && <MicIndicator status={micStatus} />}
               </div>
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1">
                 <button
                   onClick={() => setShowBionicReader(!showBionicReader)}
-                  className={`cursor-pointer text-xs px-2.5 py-1 rounded-md transition-all ${
+                  className={`cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
                     showBionicReader
-                      ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
-                      : 'lumi-btn'
+                      ? 'bg-purple-500/20 text-purple-300'
+                      : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]'
                   }`}
+                  title="Bionic Reader"
                 >
-                  Read
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 4h12M2 8h8M2 12h10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
+                </button>
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className={`cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center transition-all ${
+                    showSettings
+                      ? 'bg-purple-500/20 text-purple-300'
+                      : 'text-white/40 hover:text-white/70 hover:bg-white/[0.06]'
+                  }`}
+                  title="Settings"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M8 10a2 2 0 100-4 2 2 0 000 4z" stroke="currentColor" strokeWidth="1.3" />
+                    <path d="M13.5 8a5.5 5.5 0 01-.4 2.1l1.2 1.2-1.4 1.4-1.2-1.2A5.5 5.5 0 018 13.5a5.5 5.5 0 01-2.1-.4l-1.2 1.2-1.4-1.4 1.2-1.2A5.5 5.5 0 012.5 8c0-.7.1-1.4.4-2.1L1.7 4.7l1.4-1.4 1.2 1.2A5.5 5.5 0 018 2.5c.7 0 1.4.1 2.1.4l1.2-1.2 1.4 1.4-1.2 1.2c.3.7.4 1.4.4 2.1z" stroke="currentColor" strokeWidth="1.2" />
+                  </svg>
                 </button>
                 <button
                   onClick={stopSession}
-                  className="cursor-pointer text-xs px-2.5 py-1 rounded-md lumi-btn hover:!text-red-400 hover:!border-red-400/30"
+                  className="cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                  title="End session"
                 >
-                  End
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <rect x="3" y="3" width="10" height="10" rx="2" stroke="currentColor" strokeWidth="1.5" />
+                  </svg>
                 </button>
                 <button
                   onClick={() => setIsExpanded(false)}
-                  className="cursor-pointer text-xs px-2 py-1 rounded-md lumi-btn"
+                  className="cursor-pointer w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/[0.06] transition-all"
+                  title="Collapse"
                 >
-                  ✕
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M12 4L4 12M4 4l8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                  </svg>
                 </button>
               </div>
             </div>
 
-            {/* Tab strip */}
-            <div className="relative z-10 px-4 pb-2 shrink-0">
-              <div className="rounded-xl border border-white/10 bg-white/5 p-1 grid grid-cols-3 gap-1">
+            {/* Tab strip — clean */}
+            <div className="relative z-10 px-5 pb-3 shrink-0">
+              <div className="flex gap-1 rounded-xl bg-white/[0.03] p-1">
                 {(['platform', 'chat', 'session'] as SideTab[]).map((tab) => (
                   <button
                     key={tab}
-                    onClick={() => setActiveTab(tab)}
-                    className={`text-[11px] py-1.5 rounded-lg capitalize transition-colors ${
+                    onClick={() => { setActiveTab(tab); setShowSettings(false) }}
+                    className={`cursor-pointer flex-1 text-[13px] py-2 rounded-lg transition-all ${
                       activeTab === tab
-                        ? 'bg-cyan-500/20 border border-cyan-300/35 text-cyan-100'
-                        : 'text-white/60 hover:text-white/90 hover:bg-white/10 border border-transparent'
+                        ? 'bg-purple-500/15 text-white/90 font-medium'
+                        : 'text-white/40 hover:text-white/60 hover:bg-white/[0.04]'
                     }`}
                   >
-                    <span className="mr-1">{TAB_META[tab].icon}</span>
                     {TAB_META[tab].label}
                   </button>
                 ))}
@@ -952,12 +985,6 @@ export default function App() {
                     <PlatformPanel
                       onPrompt={handlePlatformPrompt}
                       outcomeSignals={outcomeSignals}
-                      customDistractingApps={customDistractingApps}
-                      customDistractingUrls={customDistractingUrls}
-                      onAddDistractingApp={addCustomDistractingApp}
-                      onRemoveDistractingApp={removeCustomDistractingApp}
-                      onAddDistractingUrl={addCustomDistractingUrl}
-                      onRemoveDistractingUrl={removeCustomDistractingUrl}
                     />
                     <MissionSprintBoard
                       mission={mission}
@@ -965,8 +992,6 @@ export default function App() {
                       missionCompleted={missionCompleted}
                       onToggleMissionCompleted={handleToggleMissionCompleted}
                       doneStreak={doneStreak}
-                      sprintMinutes={sprintMinutes}
-                      onSprintMinutesChange={handleSprintMinutesChange}
                       sprintSecondsLeft={sprintSecondsLeft}
                       isRunning={isSprintRunning}
                       onStartPause={handleSprintStartPause}
@@ -982,7 +1007,7 @@ export default function App() {
                     animate={{ opacity: 1, x: 0 }}
                     exit={{ opacity: 0, x: -18 }}
                     transition={{ duration: 0.2, ease: 'easeOut' }}
-                    className="px-4 flex flex-col gap-2 min-h-full"
+                    className="px-5 flex flex-col gap-2.5 min-h-full"
                   >
                     <div className="flex-1" />
                     {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
@@ -994,16 +1019,16 @@ export default function App() {
                         animate={{ opacity: 1, scale: 1 }}
                         className="self-start glass-light rounded-2xl rounded-tl-sm px-4 py-2.5"
                       >
-                        <div className="flex gap-1 items-center">
+                        <div className="flex gap-1.5 items-center">
                           {[0, 1, 2].map((i) => (
                             <motion.div
                               key={i}
-                              className="w-1.5 h-1.5 bg-purple-400 rounded-full"
-                              animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
-                              transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                              className="w-1.5 h-1.5 bg-purple-400/80 rounded-full"
+                              animate={{ scale: [1, 1.4, 1], opacity: [0.4, 1, 0.4] }}
+                              transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }}
                             />
                           ))}
-                          <span className="text-white/50 text-xs ml-1">Lumi is thinking...</span>
+                          <span className="text-white/40 text-[13px] ml-1.5">Thinking...</span>
                         </div>
                       </motion.div>
                     )}
@@ -1030,20 +1055,22 @@ export default function App() {
             </div>
 
             {/* Chat input */}
-            <div className="relative z-10 px-4 py-3 shrink-0">
+            <div className="relative z-10 px-5 py-3 shrink-0">
               {pendingAttachments.length > 0 && (
                 <div className="mb-2 flex flex-wrap gap-1.5">
                   {pendingAttachments.map((file) => (
-                    <span key={file.id} className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 border border-cyan-300/30 px-2 py-0.5 text-[10px] text-cyan-100">
+                    <span key={file.id} className="inline-flex items-center gap-1.5 rounded-full bg-purple-500/10 border border-purple-400/15 px-3 py-1 text-[12px] text-purple-200">
                       📎 {file.name}
-                      {file.unsupported && <span className="text-amber-200">(meta)</span>}
+                      {file.unsupported && <span className="text-amber-200/80">(meta)</span>}
                       <button
                         type="button"
                         onClick={() => removePendingAttachment(file.id)}
-                        className="text-cyan-100/80 hover:text-white"
+                        className="text-purple-200/60 hover:text-white ml-0.5"
                         title="Remove attachment"
                       >
-                        ✕
+                        <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                          <path d="M9 3L3 9M3 3l6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                        </svg>
                       </button>
                     </span>
                   ))}
@@ -1062,23 +1089,25 @@ export default function App() {
                 <button
                   type="button"
                   onClick={() => fileInputRef.current?.click()}
-                  className="cursor-pointer glass rounded-xl px-3 py-2 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/15 transition-all text-sm font-medium"
+                  className="cursor-pointer rounded-xl px-3 py-2.5 text-white/30 hover:text-white/60 hover:bg-white/[0.06] transition-all"
                   title="Attach files"
                 >
-                  📎
+                  <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                    <path d="M15.5 8.5l-6.8 6.8a4 4 0 01-5.6-5.6l6.8-6.8a2.7 2.7 0 013.7 3.7l-6.8 6.8a1.3 1.3 0 01-1.9-1.9l6.3-6.3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                  </svg>
                 </button>
 
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder={activeTab === 'platform' ? 'Ask or run a platform action...' : 'Ask Lumi anything...'}
+                  placeholder="Ask Lumi anything..."
                   autoFocus
-                  className="flex-1 select-text glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
+                  className="flex-1 select-text rounded-xl border border-white/[0.08] bg-white/[0.04] px-4 py-2.5 text-[14px] text-white placeholder-white/25 outline-none focus:border-purple-400/30 transition-colors"
                 />
                 <button
                   type="submit"
-                  className="cursor-pointer glass rounded-xl px-4 py-2 text-purple-400 hover:text-purple-300 hover:bg-purple-500/15 transition-all text-sm font-medium"
+                  className="cursor-pointer rounded-xl px-4 py-2.5 bg-purple-500/15 text-purple-300 hover:bg-purple-500/25 transition-all text-[14px] font-medium"
                 >
                   Send
                 </button>
@@ -1112,10 +1141,10 @@ export default function App() {
           isThinking={isThinking}
           onClick={handleCharacterClick}
         />
-        <p className={`text-center text-[11px] ${isActive ? 'text-white/40' : 'text-white/60'}`}>
+        <p className={`text-center text-[12px] ${isActive ? 'text-white/30' : 'text-white/50'}`}>
           {lumiState === 'sleeping' && 'Click to start'}
-          {lumiState === 'watching' && 'Watching...'}
-          {lumiState === 'intervening' && 'Lumi has a message'}
+          {lumiState === 'watching' && 'Studying...'}
+          {lumiState === 'intervening' && 'Tap me!'}
           {lumiState === 'chatting' && 'Chatting'}
           {lumiState === 'break' && 'Break time!'}
         </p>

@@ -11,21 +11,21 @@ export default function ChatBubble({ message }: { message: ChatMessage }) {
     isLumi && triggerType
       ? `bg-gradient-to-br ${TRIGGER_COLORS[triggerType]}`
       : isLumi
-      ? 'bg-gradient-to-br from-purple-500/20 to-indigo-500/20 border border-purple-400/20'
-      : 'bg-white/10 border border-white/15'
+      ? 'bg-gradient-to-br from-purple-500/15 to-indigo-500/15 border border-purple-400/15'
+      : 'bg-white/[0.06] border border-white/[0.08]'
 
   return (
     <motion.div
-      initial={{ opacity: 0, scale: 0.85, y: 8 }}
+      initial={{ opacity: 0, scale: 0.92, y: 6 }}
       animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.85, y: 8 }}
-      transition={{ type: 'spring', damping: 22, stiffness: 350 }}
-      className={`max-w-[92%] ${isLumi ? 'self-start' : 'self-end'}`}
+      exit={{ opacity: 0, scale: 0.92, y: 6 }}
+      transition={{ type: 'spring', damping: 24, stiffness: 300 }}
+      className={`max-w-[90%] ${isLumi ? 'self-start' : 'self-end'}`}
     >
       <div
         className={`
-          rounded-2xl px-4 py-2.5 text-sm leading-relaxed backdrop-blur-md
-          text-white ${colorClass}
+          rounded-2xl px-4 py-3 text-[14px] leading-relaxed backdrop-blur-md
+          text-white/90 ${colorClass}
           ${isLumi ? 'rounded-tl-sm' : 'rounded-tr-sm'}
         `}
       >
@@ -41,7 +41,7 @@ export default function ChatBubble({ message }: { message: ChatMessage }) {
             {attachments.map((file) => (
               <span
                 key={file.id}
-                className="inline-flex items-center rounded-full bg-black/25 border border-white/20 px-2 py-0.5 text-[10px] text-white/90"
+                className="inline-flex items-center rounded-full bg-black/20 border border-white/15 px-2.5 py-1 text-[11px] text-white/80"
                 title={file.previewText || file.name}
               >
                 📎 {file.name}
@@ -51,7 +51,7 @@ export default function ChatBubble({ message }: { message: ChatMessage }) {
         )}
       </div>
       <div
-        className={`text-xs text-white/30 mt-1 px-1 ${isLumi ? 'text-left' : 'text-right'}`}
+        className={`text-[11px] text-white/25 mt-1.5 px-1 ${isLumi ? 'text-left' : 'text-right'}`}
       >
         {isLumi ? 'Lumi' : 'You'} ·{' '}
         {new Date(message.timestamp).toLocaleTimeString([], {
