@@ -674,6 +674,18 @@ export function registerIpcHandlers(win: BrowserWindow) {
     }
   })
 
+  // === KNOWLEDGE GRAPH ===
+  ipcMain.handle('build-knowledge-graph', async (_event, source?: string) => {
+    try {
+      const mcpClient = getMcpClientSync()
+      if (!mcpClient) return { nodes: [], edges: [], sources: [] }
+      return await mcpClient.callTool('build_knowledge_graph', source ? { source } : {})
+    } catch (err: any) {
+      console.error('[Knowledge Graph] build failed:', err?.message || err)
+      return { nodes: [], edges: [], sources: [] }
+    }
+  })
+
   // === ATTACHMENT PROCESSING ===
   ipcMain.handle('process-attachments', async (_event, attachments: AttachmentPayload[]) => {
     try {

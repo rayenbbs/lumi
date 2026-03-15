@@ -3,6 +3,7 @@ import { motion } from 'framer-motion'
 interface PlatformPanelProps {
   onPrompt: (prompt: string) => void
   outcomeSignals: Array<{ label: string; value: string }>
+  hasKnowledgeSources?: boolean
 }
 
 type QuickAction = {
@@ -40,6 +41,7 @@ const QUICK_ACTIONS: QuickAction[] = [
 export default function PlatformPanel({
   onPrompt,
   outcomeSignals,
+  hasKnowledgeSources,
 }: PlatformPanelProps) {
   return (
     <motion.section
@@ -68,6 +70,33 @@ export default function PlatformPanel({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Knowledge Map — visualization tool */}
+      <div className="mt-5 space-y-2.5">
+        <p className="text-[13px] font-medium text-white/50 uppercase tracking-wider">Visualization</p>
+        <button
+          onClick={() => (window as any).electronAPI?.openKnowledgeGraph?.()}
+          disabled={!hasKnowledgeSources}
+          className="cursor-pointer w-full text-left rounded-2xl border border-white/[0.06] bg-white/[0.03] hover:bg-purple-500/10 hover:border-purple-400/20 transition-all px-4 py-3.5 group disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <div className="flex items-center gap-3">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" className="shrink-0">
+              <path d="M12 3v18M12 3l-6 4v6M12 3l6 4v6M6 7l6 4M18 7l-6 4M6 13l6 4M18 13l-6 4" stroke="rgba(192,170,255,0.7)" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <div>
+              <p className="text-[14px] text-white/90 font-medium group-hover:text-white transition-colors">Knowledge Map</p>
+              <p className="text-[12px] text-white/40 mt-0.5">
+                {hasKnowledgeSources
+                  ? 'See how concepts connect across your PDFs'
+                  : 'Add PDFs in Settings first'}
+              </p>
+            </div>
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" className="ml-auto shrink-0 text-white/20 group-hover:text-white/40 transition-colors">
+              <path d="M2 12L12 2M12 2H5M12 2v7" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </div>
+        </button>
       </div>
 
       {/* Session Stats — minimal */}

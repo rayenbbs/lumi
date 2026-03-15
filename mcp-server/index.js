@@ -596,6 +596,285 @@ Current topic: ${ocrText?.substring(0, 300)}`,
   return `${base}\n\n${ctx}`
 }
 
+// ── KNOWLEDGE GRAPH (ONTOLOGY) BUILDER ───────────────────────────────────────
+
+const STOPWORDS = new Set([
+  'this','that','with','from','have','been','will','would','could','should',
+  'their','there','they','them','then','than','these','those','what','when',
+  'where','which','while','about','after','before','between','through',
+  'during','each','every','some','such','also','into','over','under','most',
+  'more','less','only','just','very','much','many','well','even','same',
+  'other','like','make','made','does','done','were','your','yours','used',
+  'using','being','here','able','upon','both','must','need','back','next',
+  'still','good','part','case','take','come','work','way','may','say',
+  'said','know','new','want','look','first','last','long','great','little',
+  'own','old','right','big','high','different','small','large','another',
+  'again','because','however','therefore','since','until','although',
+  'often','without','within','along','around','across','among','toward',
+  'given','based','above','below','called','known','chapter','section',
+  'page','figure','table','example','note','following','include','includes',
+  'including','provide','provides','related','number','form','order',
+  'point','result','results','show','shown','shows','data','information',
+  'process','type','types','value','values','level','state','time','year',
+  'line','name','text','file',
+])
+
+/**
+ * Build ontological knowledge graph: hierarchical tree with predicates.
+ *
+ * Returns per source PDF:
+ * {
+ *   sources: [{ name, tree: OntologyNode }]
+ * }
+ *
+ * OntologyNode = { id, label, summary?, predicate?, children: OntologyNode[] }
+ *
+ * Uses Gemini to build a proper ontological hierarchy from chunk text.
+ * Falls back to keyword-cluster heuristic if Gemini unavailable.
+ */
+async function buildKnowledgeGraph(sourceFilter) {
+  const chunks = sourceFilter
+    ? courseIndex.filter(c => c.source === sourceFilter)
+    : courseIndex
+
+  if (chunks.length === 0) {
+    return { sources: [], tree: null }
+  }
+
+  const sourceNames = [...new Set(chunks.map(c => c.source))]
+  const sourceTrees = []
+
+  // Build per-source trees with source-prefixed IDs
+  for (const sourceName of sourceNames) {
+    const srcChunks = chunks.filter(c => c.source === sourceName)
+    const fullText = srcChunks.map(c => c.text).join('\n')
+    const prefix = sourceName.replace(/[^a-z0-9]/gi, '_')
+
+    let tree = null
+
+    if (GEMINI_API_KEY) {
+      try {
+        tree = await extractOntologyWithGemini(sourceName, fullText, prefix)
+      } catch (err) {
+        log('Gemini ontology extraction failed for', sourceName, ':', err.message)
+      }
+    }
+
+    if (!tree) {
+      tree = buildFallbackOntology(sourceName, srcChunks, prefix)
+    }
+
+    sourceTrees.push({ name: sourceName, tree })
+  }
+
+  // Build unified tree: root → PDF sources → topics → concepts
+  // Also detect shared concepts across PDFs
+  const unifiedRoot = {
+    id: 'root',
+    label: 'Knowledge Base',
+    summary: `${sourceNames.length} source${sourceNames.length !== 1 ? 's' : ''}, ${chunks.length} sections`,
+    children: sourceTrees.map(st => st.tree),
+  }
+
+  // Find shared concepts across PDFs and add cross-reference nodes
+  if (sourceTrees.length > 1) {
+    const conceptsByLabel = new Map() // label → [{ sourceIdx, node }]
+    for (let si = 0; si < sourceTrees.length; si++) {
+      const tree = sourceTrees[si].tree
+      function collectConcepts(node, depth) {
+        if (depth >= 1) { // skip root (the PDF name)
+          const key = node.label.toLowerCase()
+          if (!conceptsByLabel.has(key)) conceptsByLabel.set(key, [])
+          conceptsByLabel.get(key).push({ sourceIdx: si, sourceName: sourceTrees[si].name, node })
+        }
+        if (node.children) node.children.forEach(c => collectConcepts(c, depth + 1))
+      }
+      collectConcepts(tree, 0)
+    }
+
+    // Concepts appearing in 2+ PDFs
+    const shared = [...conceptsByLabel.entries()]
+      .filter(([, entries]) => {
+        const uniqueSources = new Set(entries.map(e => e.sourceIdx))
+        return uniqueSources.size > 1
+      })
+
+    if (shared.length > 0) {
+      const sharedNode = {
+        id: 'shared-concepts',
+        label: 'Shared Concepts',
+        summary: `${shared.length} concept${shared.length !== 1 ? 's' : ''} found across multiple PDFs`,
+        predicate: 'links',
+        children: shared.slice(0, 12).map(([label, entries], i) => ({
+          id: `shared-${i}`,
+          label: label,
+          summary: `Found in: ${[...new Set(entries.map(e => e.sourceName.replace('.pdf', '')))].join(', ')}`,
+          predicate: 'shared across',
+          children: [],
+        })),
+      }
+      unifiedRoot.children.push(sharedNode)
+    }
+  }
+
+  log(`Knowledge graph: ${sourceTrees.length} sources, unified tree built`)
+  return { sources: sourceTrees, tree: unifiedRoot }
+}
+
+/**
+ * Use Gemini to extract a proper ontology from PDF text.
+ * Returns a hierarchical tree with predicates on edges.
+ */
+async function extractOntologyWithGemini(sourceName, fullText, idPrefix) {
+  // Take a representative sample (first ~4000 chars to stay within limits)
+  const sample = fullText.substring(0, 4000)
+  const label = sourceName.replace('.pdf', '')
+
+  const prompt = `You are building a knowledge ontology for a student studying from the document "${label}".
+
+Given this text from the document, extract the key concepts and organize them into a hierarchical ontology tree.
+
+RULES:
+- The root node is the document/course title
+- Each node has: "label" (concept name), "summary" (one sentence explanation), "predicate" (relationship to parent), "children" (sub-concepts)
+- Use meaningful predicates like: "covers", "contains", "requires", "leads to", "is a type of", "depends on", "contrasts with", "is part of", "defines", "explains"
+- Aim for 2-4 top-level topics, each with 2-5 sub-concepts
+- Keep labels short (1-4 words), summaries brief (1 sentence)
+- Only include concepts actually present in the text
+
+TEXT:
+${sample}
+
+Respond with ONLY valid JSON (no markdown, no backticks):
+{
+  "label": "Document Title",
+  "summary": "One sentence overview",
+  "children": [
+    {
+      "label": "Topic",
+      "summary": "Brief explanation",
+      "predicate": "covers",
+      "children": [
+        {
+          "label": "Sub-concept",
+          "summary": "Brief explanation",
+          "predicate": "contains"
+        }
+      ]
+    }
+  ]
+}`
+
+  const response = await fetch(GEMINI_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+    }),
+  })
+
+  const data = await response.json()
+  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+
+  // Extract JSON object from response
+  const jsonMatch = text.match(/\{[\s\S]*\}/)
+  if (!jsonMatch) throw new Error('No JSON in Gemini response')
+
+  const tree = JSON.parse(jsonMatch[0])
+
+  // Assign IDs recursively with source prefix to avoid collisions
+  let idCounter = 0
+  function assignIds(node) {
+    node.id = `${idPrefix}-${idCounter++}`
+    node.children = node.children || []
+    for (const child of node.children) assignIds(child)
+  }
+  assignIds(tree)
+
+  return tree
+}
+
+/**
+ * Fallback: build a simple ontology from keyword clustering when Gemini isn't available.
+ */
+function buildFallbackOntology(sourceName, srcChunks, idPrefix) {
+  // Extract meaningful keywords per chunk
+  const chunkData = srcChunks.map(chunk => {
+    const words = chunk.text
+      .toLowerCase()
+      .replace(/[^a-z0-9\s-]/g, ' ')
+      .split(/\s+/)
+      .filter(w => w.length > 3 && !STOPWORDS.has(w) && !/^\d+$/.test(w))
+
+    const freq = new Map()
+    for (const w of words) freq.set(w, (freq.get(w) || 0) + 1)
+
+    const topWords = [...freq.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([w]) => w)
+
+    return { text: chunk.text, keywords: topWords, page: chunk.page }
+  })
+
+  // Global keyword frequency
+  const globalFreq = new Map()
+  for (const cd of chunkData) {
+    for (const kw of cd.keywords) {
+      globalFreq.set(kw, (globalFreq.get(kw) || 0) + 1)
+    }
+  }
+
+  // Top keywords become topics (appearing in 2+ chunks)
+  const topics = [...globalFreq.entries()]
+    .filter(([, count]) => count >= 2)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+
+  // For each topic, find related sub-concepts (co-occurring keywords)
+  let idCounter = 0
+  const topicNodes = topics.map(([topicKw, topicCount]) => {
+    // Find chunks that mention this topic
+    const relevantChunks = chunkData.filter(cd => cd.keywords.includes(topicKw))
+
+    // Find co-occurring keywords (sub-concepts)
+    const coFreq = new Map()
+    for (const cd of relevantChunks) {
+      for (const kw of cd.keywords) {
+        if (kw !== topicKw) coFreq.set(kw, (coFreq.get(kw) || 0) + 1)
+      }
+    }
+
+    const subConcepts = [...coFreq.entries()]
+      .filter(([kw]) => !topics.some(([t]) => t === kw)) // exclude other top-level topics
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([kw, count]) => ({
+        id: `${idPrefix}-${idCounter++}`,
+        label: kw,
+        summary: `Appears in ${count} section${count !== 1 ? 's' : ''} alongside "${topicKw}"`,
+        predicate: 'relates to',
+        children: [],
+      }))
+
+    return {
+      id: `${idPrefix}-${idCounter++}`,
+      label: topicKw,
+      summary: `Key topic appearing in ${topicCount} section${topicCount !== 1 ? 's' : ''}`,
+      predicate: 'covers',
+      children: subConcepts,
+    }
+  })
+
+  return {
+    id: `${idPrefix}-root`,
+    label: sourceName.replace('.pdf', ''),
+    summary: `${srcChunks.length} sections indexed`,
+    children: topicNodes,
+  }
+}
+
 // ── MCP SERVER ───────────────────────────────────────────────────────────────
 
 const TOOL_DEFINITIONS = [
@@ -651,6 +930,16 @@ const TOOL_DEFINITIONS = [
     name: 'list_sources',
     description: 'List all indexed knowledge source files with their chunk counts.',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'build_knowledge_graph',
+    description: 'Build a knowledge graph from indexed PDFs. Extracts key concepts and their relationships based on co-occurrence. Optionally enriches labels using Gemini.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        source: { type: 'string', description: 'Filter to a specific PDF file name (optional — omit for all sources)' },
+      },
+    },
   },
 ]
 
@@ -721,6 +1010,13 @@ async function handleToolCall(name, args) {
       const sources = [...sourceCounts.entries()].map(([name, chunks]) => ({ name, chunks }))
       return {
         content: [{ type: 'text', text: JSON.stringify({ sources }) }],
+      }
+    }
+
+    case 'build_knowledge_graph': {
+      const graph = await buildKnowledgeGraph(args.source)
+      return {
+        content: [{ type: 'text', text: JSON.stringify(graph) }],
       }
     }
 

@@ -1,5 +1,5 @@
 import { config as loadEnv } from 'dotenv'
-import { app, BrowserWindow, screen, session, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, screen, session, shell } from 'electron'
 import path from 'path'
 import { spawn, ChildProcess } from 'child_process'
 import { registerIpcHandlers } from './ipc-handlers'
@@ -8,6 +8,7 @@ import { getMcpClient, shutdownMcpClient } from './mcp-client'
 loadEnv()
 
 export let mainWindow: BrowserWindow | null = null
+let graphWindow: BrowserWindow | null = null
 let pythonProcess: ChildProcess | null = null
 
 function spawnPythonServer() {
@@ -77,6 +78,53 @@ function createWindow() {
   registerIpcHandlers(mainWindow)
 }
 
+function openGraphWindow() {
+  if (graphWindow && !graphWindow.isDestroyed()) {
+    graphWindow.focus()
+    return
+  }
+
+  // Lower the main overlay so it doesn't steal mouse events from the graph window
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setAlwaysOnTop(false)
+    mainWindow.setIgnoreMouseEvents(true, { forward: false })
+  }
+
+  graphWindow = new BrowserWindow({
+    width: 1100,
+    height: 750,
+    minWidth: 700,
+    minHeight: 500,
+    title: 'Lumi — Knowledge Map',
+    frame: true,
+    backgroundColor: '#0a0614',
+    resizable: true,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false,
+    },
+  })
+
+  if (process.env.NODE_ENV === 'development') {
+    const devUrl = process.env.ELECTRON_RENDERER_URL || 'http://localhost:5173'
+    graphWindow.loadURL(`${devUrl}/graph.html`)
+  } else {
+    graphWindow.loadFile(path.join(__dirname, '../renderer/graph.html'))
+  }
+
+  graphWindow.on('closed', () => {
+    graphWindow = null
+    // Restore the main overlay to its normal always-on-top state
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.setAlwaysOnTop(true)
+      mainWindow.setIgnoreMouseEvents(true, { forward: true })
+    }
+  })
+}
+
 app.whenReady().then(async () => {
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(true)
@@ -92,6 +140,11 @@ app.whenReady().then(async () => {
     console.log('[Main] MCP server ready')
   }).catch((err) => {
     console.warn('[Main] MCP server failed to start (app will work without syllabus search):', err.message)
+  })
+
+  ipcMain.handle('open-knowledge-graph', () => {
+    openGraphWindow()
+    return { opened: true }
   })
 
   createWindow()

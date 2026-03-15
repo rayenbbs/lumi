@@ -26,6 +26,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/renderer/index.html'),
+          graph: resolve(__dirname, 'src/renderer/graph.html'),
         },
       },
     },

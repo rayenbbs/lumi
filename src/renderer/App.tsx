@@ -68,6 +68,9 @@ declare global {
       addKnowledgeFile: () => Promise<{ added: string[]; error?: string }>
       addKnowledgeFilesByPath: (filePaths: string[]) => Promise<{ added: string[]; error?: string }>
       removeKnowledgeFile: (fileName: string) => Promise<{ removed: boolean; error?: string }>
+      buildKnowledgeGraph: (source?: string) => Promise<{
+        sources: Array<{ name: string; tree: any }>
+      }>
       setClickThrough: (enable: boolean) => Promise<void>
       resizeWindow: (w: number, h: number) => Promise<void>
       saveSession: (data: any) => Promise<boolean>
@@ -1123,6 +1126,7 @@ export default function App() {
                     <PlatformPanel
                       onPrompt={handlePlatformPrompt}
                       outcomeSignals={outcomeSignals}
+                      hasKnowledgeSources={knowledgeSources.length > 0}
                     />
                     <MissionSprintBoard
                       mission={mission}

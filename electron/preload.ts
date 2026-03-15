@@ -30,6 +30,19 @@ contextBridge.exposeInMainWorld('electronAPI', {
   addKnowledgeFile: () => ipcRenderer.invoke('add-knowledge-file') as Promise<{ added: string[]; error?: string }>,
   addKnowledgeFilesByPath: (filePaths: string[]) => ipcRenderer.invoke('add-knowledge-files-by-path', filePaths) as Promise<{ added: string[]; error?: string }>,
   removeKnowledgeFile: (fileName: string) => ipcRenderer.invoke('remove-knowledge-file', fileName) as Promise<{ removed: boolean; error?: string }>,
+  openKnowledgeGraph: () => ipcRenderer.invoke('open-knowledge-graph') as Promise<{ opened: boolean }>,
+  buildKnowledgeGraph: (source?: string) => ipcRenderer.invoke('build-knowledge-graph', source) as Promise<{
+    sources: Array<{
+      name: string
+      tree: {
+        id: string
+        label: string
+        summary?: string
+        predicate?: string
+        children?: any[]
+      }
+    }>
+  }>,
 
   // Attachment processing (main process parsing)
   processAttachments: (attachments: Array<{ id: string; name: string; size: number; type: string; dataUrl: string }>) =>
