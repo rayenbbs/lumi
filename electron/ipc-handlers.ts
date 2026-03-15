@@ -425,13 +425,16 @@ export function registerIpcHandlers(win: BrowserWindow) {
     }
   })
 
-  // === ELEVENLABS TTS ===
+  // === TTS (default model: Kokoro-82M) ===
   const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY || ''
-  // "Rachel" — warm, friendly female voice. Change voice_id for different voices.
-  const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+  // "Rachel" is retained as a default voice only when using ElevenLabs-compatible endpoint.
+  const TTS_VOICE_ID = process.env.TTS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID || 'EXAVITQu4vr4xnSDxMaL'
+  const TTS_MODEL = process.env.TTS_MODEL || 'Kokoro-82M'
+  const TTS_API_URL = process.env.TTS_API_URL || `https://api.elevenlabs.io/v1/text-to-speech/${TTS_VOICE_ID}`
 
   ipcMain.handle('text-to-speech', async (_event, text: string) => {
-    if (!ELEVENLABS_API_KEY) return { success: false, audio: null }
+    const isElevenLabsEndpoint = /elevenlabs\.io/i.test(TTS_API_URL)
+    if (isElevenLabsEndpoint && !ELEVENLABS_API_KEY) return { success: false, audio: null }
 
     try {
       const cleanText = text.replace(
@@ -444,18 +447,21 @@ export function registerIpcHandlers(win: BrowserWindow) {
       const timeout = setTimeout(() => controller.abort(), 15000)
 
       const response = await fetch(
-        `https://api.elevenlabs.io/v1/text-to-speech/${ELEVENLABS_VOICE_ID}`,
+        TTS_API_URL,
         {
           method: 'POST',
           headers: {
-            'xi-api-key': ELEVENLABS_API_KEY,
             'Content-Type': 'application/json',
             'Accept': 'audio/mpeg',
+            ...(isElevenLabsEndpoint ? { 'xi-api-key': ELEVENLABS_API_KEY } : {}),
           },
           signal: controller.signal,
           body: JSON.stringify({
             text: cleanText,
-            model_id: 'eleven_turbo_v2_5',
+            model_id: TTS_MODEL,
+            model: TTS_MODEL,
+            input: cleanText,
+            voice: TTS_VOICE_ID,
             voice_settings: {
               stability: 0.5,
               similarity_boost: 0.75,
@@ -469,7 +475,7 @@ export function registerIpcHandlers(win: BrowserWindow) {
       clearTimeout(timeout)
 
       if (!response.ok) {
-        console.warn('[TTS] ElevenLabs error:', response.status, await response.text().catch(() => ''))
+        console.warn('[TTS] Error:', response.status, await response.text().catch(() => ''))
         return { success: false, audio: null }
       }
 
@@ -477,28 +483,31 @@ export function registerIpcHandlers(win: BrowserWindow) {
       const base64 = Buffer.from(buffer).toString('base64')
       return { success: true, audio: `data:audio/mpeg;base64,${base64}` }
     } catch (err: any) {
-      console.warn('[TTS] ElevenLabs failed:', err?.message || err)
+      console.warn('[TTS] Failed:', err?.message || err)
       return { success: false, audio: null }
     }
   })
 
-  // === SPEECH-TO-TEXT (Deepgram — free $200 credit) ===
+  // === SPEECH-TO-TEXT (default model: Canary-Qwen-2.5B) ===
   const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || ''
+  const STT_MODEL = process.env.STT_MODEL || 'Canary-Qwen-2.5B'
+  const STT_API_URL = process.env.STT_API_URL || 'https://api.deepgram.com/v1/listen'
 
   ipcMain.handle('transcribe-audio', async (_event, audioData: Uint8Array) => {
-    if (!DEEPGRAM_API_KEY) {
+    const isDeepgramEndpoint = /deepgram\.com/i.test(STT_API_URL)
+    if (isDeepgramEndpoint && !DEEPGRAM_API_KEY) {
       console.warn('[STT] DEEPGRAM_API_KEY not set in .env')
       return { transcript: '' }
     }
     try {
       const body = Buffer.from(audioData)
       const response = await fetch(
-        'https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&language=en',
+        `${STT_API_URL}?model=${encodeURIComponent(STT_MODEL)}&smart_format=true&language=en`,
         {
           method: 'POST',
           headers: {
-            Authorization: `Token ${DEEPGRAM_API_KEY}`,
             'Content-Type': 'audio/wav',
+            ...(isDeepgramEndpoint ? { Authorization: `Token ${DEEPGRAM_API_KEY}` } : {}),
           },
           body,
         }
@@ -511,16 +520,16 @@ export function registerIpcHandlers(win: BrowserWindow) {
       }
 
       const transcript = data.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() || ''
-      if (transcript) console.log('[STT] Deepgram:', transcript)
+      if (transcript) console.log('[STT] Transcript:', transcript)
       return { transcript }
     } catch (err) {
-      console.error('[STT] Deepgram failed:', err)
+      console.error('[STT] Failed:', err)
       return { transcript: '' }
     }
   })
 
   // === CHAT (via MCP server) ===
-  ipcMain.handle('send-to-gemini', async (_event, payload) => {
+  ipcMain.handle('send-to-qwen', async (_event, payload) => {
     try {
       const mcpClient = getMcpClientSync()
       if (!mcpClient) {
@@ -528,7 +537,7 @@ export function registerIpcHandlers(win: BrowserWindow) {
       }
       return await mcpClient.chat(payload)
     } catch (error: any) {
-      console.error('[IPC] send-to-gemini (MCP) failed:', error)
+      console.error('[IPC] send-to-qwen (MCP) failed:', error)
       return {
         success: false,
         message: "I'm having trouble thinking right now. Try again in a moment.",

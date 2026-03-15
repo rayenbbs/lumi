@@ -46,8 +46,8 @@ interface LumiStore {
   micStatus: 'off' | 'listening'
   setMicStatus: (s: 'off' | 'listening') => void
 
-  ollamaStatus: 'unknown' | 'online' | 'offline'
-  setOllamaStatus: (s: 'unknown' | 'online' | 'offline') => void
+  qwenStatus: 'unknown' | 'online' | 'offline'
+  setQwenStatus: (s: 'unknown' | 'online' | 'offline') => void
 
   // Chat
   messages: ChatMessage[]
@@ -89,8 +89,8 @@ export const useLumiStore = create<LumiStore>((set) => ({
   micStatus: 'off',
   setMicStatus: (micStatus) => set({ micStatus }),
 
-  ollamaStatus: 'unknown',
-  setOllamaStatus: (ollamaStatus) => set({ ollamaStatus }),
+  qwenStatus: 'unknown',
+  setQwenStatus: (qwenStatus) => set({ qwenStatus }),
 
   messages: [],
   addMessage: (msg) =>

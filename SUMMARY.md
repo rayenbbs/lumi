@@ -22,8 +22,8 @@ This project builds cleanly.
 ## To Run the Demo
 
 ```bash
-# 1. Install & start Ollama (one time)
-ollama pull llama3.2:3b
+# 1. Install & start local Qwen runtime (one time)
+ollama pull qwen3:4b
 
 # 2. Start everything (Windows)
 cd "<your-path>/lumi"

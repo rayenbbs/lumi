@@ -4,7 +4,7 @@
  * A proper Model Context Protocol server over stdio.
  * Tools:
  *   - search_syllabus  — keyword search across indexed course PDFs
- *   - chat             — build system prompt + call Gemini, returns Lumi's response
+ *   - chat             — build system prompt + call local Qwen model, returns Lumi's response
  *   - reindex          — force re-index all PDFs in data/courses/
  *   - get_status       — health check: indexed chunks, loaded PDFs
  */
@@ -326,12 +326,12 @@ function searchCourse(query, maxResults = 5) {
     }))
 }
 
-// ── GEMINI LLM ───────────────────────────────────────────────────────────────
+// ── LOCAL QWEN LLM ───────────────────────────────────────────────────────────
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=${GEMINI_API_KEY}`
+const LOCAL_LLM_URL = process.env.LOCAL_LLM_URL || 'http://127.0.0.1:11434/api/chat'
+const QWEN_MODEL = process.env.QWEN_MODEL || 'qwen3:4b'
 
-async function callGemini(triggerType, ocrText, userQuestion, driverState, conversationHistory, syllabusContext) {
+async function callQwen(triggerType, ocrText, userQuestion, driverState, conversationHistory, syllabusContext) {
   // ── Guardrail Layer 4: Rate limit ──
   const rateCheck = checkRateLimit()
   if (!rateCheck.allowed) {
@@ -351,10 +351,6 @@ async function callGemini(triggerType, ocrText, userQuestion, driverState, conve
     userQuestion = inputCheck.sanitized
   }
 
-  if (!GEMINI_API_KEY) {
-    return { success: false, message: 'GEMINI_API_KEY not configured.' }
-  }
-
   // Also sanitize conversation history
   const sanitizedHistory = (conversationHistory || []).map((m) => {
     if (m.role === 'user') {
@@ -369,44 +365,29 @@ async function callGemini(triggerType, ocrText, userQuestion, driverState, conve
   log('triggerType:', triggerType)
   log('ocrText:', ocrText?.substring(0, 200))
 
-  // Convert history — Gemini uses "model" not "assistant"
-  const rawContents = sanitizedHistory.map((m) => ({
-    role: m.role === 'assistant' ? 'model' : 'user',
-    text: m.content,
-  }))
+  const messages = [{ role: 'system', content: systemPrompt }]
+
+  for (const m of sanitizedHistory) {
+    const role = m.role === 'assistant' ? 'assistant' : 'user'
+    messages.push({ role, content: m.content })
+  }
 
   if (userQuestion) {
-    rawContents.push({ role: 'user', text: userQuestion })
+    messages.push({ role: 'user', content: userQuestion })
   }
 
-  if (rawContents.length === 0 || rawContents[rawContents.length - 1].role !== 'user') {
-    rawContents.push({ role: 'user', text: 'What should I know right now?' })
+  if (messages.length === 1 || messages[messages.length - 1].role !== 'user') {
+    messages.push({ role: 'user', content: 'What should I know right now?' })
   }
 
-  // Merge consecutive same-role messages (Gemini requires strict alternation)
-  const contents = []
-  for (const msg of rawContents) {
-    const last = contents[contents.length - 1]
-    if (last && last.role === msg.role) {
-      last.parts[0].text += '\n' + msg.text
-    } else {
-      contents.push({ role: msg.role, parts: [{ text: msg.text }] })
-    }
-  }
-
-  // Prepend system prompt into first user turn (Gemma doesn't support system_instruction)
-  if (contents.length > 0 && contents[0].role === 'user') {
-    contents[0].parts[0].text = systemPrompt + '\n\n' + contents[0].parts[0].text
-  } else {
-    contents.unshift({ role: 'user', parts: [{ text: systemPrompt }] })
-  }
-
-  const geminiPayload = {
-    contents,
-    generationConfig: {
+  const llmPayload = {
+    model: QWEN_MODEL,
+    messages,
+    stream: false,
+    options: {
       temperature: 1,
-      maxOutputTokens: 200,
-      topP: 0.9,
+      top_p: 0.9,
+      num_predict: 200,
     },
   }
 
@@ -414,22 +395,23 @@ async function callGemini(triggerType, ocrText, userQuestion, driverState, conve
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), 30000)
 
-    const response = await fetch(GEMINI_URL, {
+    const response = await fetch(LOCAL_LLM_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       signal: controller.signal,
-      body: JSON.stringify(geminiPayload),
+      body: JSON.stringify(llmPayload),
     })
 
     clearTimeout(timeout)
     const data = await response.json()
 
-    if (data.error) {
-      log('Gemini API error:', data.error.message || JSON.stringify(data.error))
-      return { success: false, message: `Gemini error: ${data.error.message || 'Unknown error'}` }
+    if (!response.ok || data.error) {
+      const errorMsg = data?.error || `HTTP ${response.status}`
+      log('Qwen API error:', errorMsg)
+      return { success: false, message: `Qwen error: ${errorMsg}` }
     }
 
-    let text = data.candidates?.[0]?.content?.parts?.[0]?.text
+    let text = data?.message?.content || ''
     if (text) {
       text = text
         .replace(/^(Lumi|Response|Trigger|Note|Output|Message|Internal|Analysis)\s*[:：]\s*/i, '')
@@ -452,7 +434,7 @@ async function callGemini(triggerType, ocrText, userQuestion, driverState, conve
       success: false,
       message: isTimeout
         ? "I'm taking too long to think. Try a simpler question!"
-        : "I'm having trouble connecting to Gemini. Check your internet connection.",
+        : "I'm having trouble reaching the local Qwen model. Make sure your local model runtime is running and qwen3:4b is installed.",
     }
   }
 }
@@ -629,8 +611,8 @@ const STOPWORDS = new Set([
  *
  * OntologyNode = { id, label, summary?, predicate?, children: OntologyNode[] }
  *
- * Uses Gemini to build a proper ontological hierarchy from chunk text.
- * Falls back to keyword-cluster heuristic if Gemini unavailable.
+ * Uses local Qwen to build a proper ontological hierarchy from chunk text.
+ * Falls back to keyword-cluster heuristic if the local model is unavailable.
  */
 async function buildKnowledgeGraph(sourceFilter) {
   const chunks = sourceFilter
@@ -652,12 +634,10 @@ async function buildKnowledgeGraph(sourceFilter) {
 
     let tree = null
 
-    if (GEMINI_API_KEY) {
-      try {
-        tree = await extractOntologyWithGemini(sourceName, fullText, prefix)
-      } catch (err) {
-        log('Gemini ontology extraction failed for', sourceName, ':', err.message)
-      }
+    try {
+      tree = await extractOntologyWithQwen(sourceName, fullText, prefix)
+    } catch (err) {
+      log('Qwen ontology extraction failed for', sourceName, ':', err.message)
     }
 
     if (!tree) {
@@ -722,10 +702,10 @@ async function buildKnowledgeGraph(sourceFilter) {
 }
 
 /**
- * Use Gemini to extract a proper ontology from PDF text.
+ * Use local Qwen to extract a proper ontology from PDF text.
  * Returns a hierarchical tree with predicates on edges.
  */
-async function extractOntologyWithGemini(sourceName, fullText, idPrefix) {
+async function extractOntologyWithQwen(sourceName, fullText, idPrefix) {
   // Take a representative sample (first ~4000 chars to stay within limits)
   const sample = fullText.substring(0, 4000)
   const label = sourceName.replace('.pdf', '')
@@ -765,21 +745,26 @@ Respond with ONLY valid JSON (no markdown, no backticks):
   ]
 }`
 
-  const response = await fetch(GEMINI_URL, {
+  const response = await fetch(LOCAL_LLM_URL, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3, maxOutputTokens: 2000 },
+      model: QWEN_MODEL,
+      messages: [{ role: 'user', content: prompt }],
+      stream: false,
+      options: { temperature: 0.3, num_predict: 2000 },
     }),
   })
 
   const data = await response.json()
-  const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+  if (!response.ok || data.error) {
+    throw new Error(data?.error || `HTTP ${response.status}`)
+  }
+  const text = data?.message?.content || ''
 
   // Extract JSON object from response
   const jsonMatch = text.match(/\{[\s\S]*\}/)
-  if (!jsonMatch) throw new Error('No JSON in Gemini response')
+  if (!jsonMatch) throw new Error('No JSON in Qwen response')
 
   const tree = JSON.parse(jsonMatch[0])
 
@@ -796,7 +781,7 @@ Respond with ONLY valid JSON (no markdown, no backticks):
 }
 
 /**
- * Fallback: build a simple ontology from keyword clustering when Gemini isn't available.
+ * Fallback: build a simple ontology from keyword clustering when Qwen isn't available.
  */
 function buildFallbackOntology(sourceName, srcChunks, idPrefix) {
   // Extract meaningful keywords per chunk
@@ -892,7 +877,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'chat',
-    description: 'Send a message through Lumi\'s LLM pipeline. Builds a context-aware system prompt based on the trigger type, optionally searches syllabus for grounding, calls Gemini, and returns the response.',
+    description: 'Send a message through Lumi\'s LLM pipeline. Builds a context-aware system prompt based on the trigger type, optionally searches syllabus for grounding, calls local Qwen, and returns the response.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -923,7 +908,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'get_status',
-    description: 'Get server health status: number of indexed chunks, loaded PDFs, and whether Gemini API key is configured.',
+    description: 'Get server health status: number of indexed chunks, loaded PDFs, and configured local model URL/model.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -933,7 +918,7 @@ const TOOL_DEFINITIONS = [
   },
   {
     name: 'build_knowledge_graph',
-    description: 'Build a knowledge graph from indexed PDFs. Extracts key concepts and their relationships based on co-occurrence. Optionally enriches labels using Gemini.',
+    description: 'Build a knowledge graph from indexed PDFs. Extracts key concepts and their relationships based on co-occurrence. Optionally enriches labels using Qwen.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -964,7 +949,7 @@ async function handleToolCall(name, args) {
         }
       }
 
-      const result = await callGemini(
+      const result = await callQwen(
         args.triggerType,
         args.ocrText,
         args.userQuestion,
@@ -995,7 +980,8 @@ async function handleToolCall(name, args) {
             indexedChunks: courseIndex.length,
             pdfsLoaded: sources.length,
             pdfFiles: sources,
-            geminiConfigured: !!GEMINI_API_KEY,
+            localLlmUrl: LOCAL_LLM_URL,
+            model: QWEN_MODEL,
           }),
         }],
       }

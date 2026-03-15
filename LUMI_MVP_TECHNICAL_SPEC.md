@@ -2,7 +2,7 @@
 
 ## Executive Summary
 
-Lumi is a transparent, always-on-top Electron desktop application that acts as an empathetic AI study companion for neurodivergent students. It combines lightweight eye-tracking (WebGazer.js), local OCR (Tesseract.js), window detection (active-win), and a locally-hosted LLM (Ollama + Llama 3.2 3B) grounded via MCP to proactively support learners — detecting distractions, stuck reading, fatigue, and providing syllabus-grounded tutoring.
+Lumi is a transparent, always-on-top Electron desktop application that acts as an empathetic AI study companion for neurodivergent students. It combines lightweight eye-tracking (WebGazer.js), local OCR (Tesseract.js), window detection (active-win), and a locally-hosted LLM (Ollama + Qwen3 4B) grounded via MCP to proactively support learners — detecting distractions, stuck reading, fatigue, and providing syllabus-grounded tutoring.
 
 **Constraint:** No external/proprietary APIs (OpenAI, Anthropic, Gemini). LLM must be ≤5B parameters, locally hosted.
 
@@ -66,7 +66,7 @@ Lumi is a transparent, always-on-top Electron desktop application that acts as a
 │  ┌─────────────────────┐    ┌──────────────────────────────────┐ │
 │  │ Ollama Server        │    │ MCP Server (Node.js)             │ │
 │  │ localhost:11434      │◄───│ Indexes course PDFs              │ │
-│  │ llama3.2:3b          │    │ Provides retrieval tool          │ │
+│  │ qwen3:4b             │    │ Provides retrieval tool          │ │
 │  └─────────────────────┘    └──────────────────────────────────┘ │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -358,7 +358,7 @@ export function registerIpcHandlers(mainWindow: BrowserWindow) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          model: 'llama3.2:3b',
+          model: 'qwen3:4b',
           messages,
           stream: false,
           options: {
@@ -1757,11 +1757,11 @@ export default function BionicReader({ text, onClose }: Props) {
 curl -fsSL https://ollama.com/install.sh | sh
 
 # 3. Pull the model
-ollama pull llama3.2:3b
+ollama pull qwen3:4b
 
 # 4. Verify Ollama is running
 curl http://localhost:11434/api/tags
-# Should list llama3.2:3b
+# Should list qwen3:4b
 ```
 
 ### Project Setup
@@ -1811,7 +1811,7 @@ npm run dev
 ## 6. Demo Script (2-Minute Pitch)
 
 ### Setup Before Demo
-1. Ollama running with llama3.2:3b loaded
+1. Ollama running with qwen3:4b loaded
 2. MCP server running with a sample ML lecture PDF
 3. Lumi app running, character sleeping in corner
 4. Open a PDF viewer with a Machine Learning lecture document
@@ -1872,7 +1872,7 @@ Ordered by impact-to-effort ratio:
 |---|---|
 | WebGazer.js accuracy varies with lighting | Provide calibration UI at session start. Degrade gracefully (disable stuck/fatigue detection) if calibration fails. |
 | Tesseract.js OCR is slow (~2-3s per frame) | Only capture every 5 seconds. Cache OCR results. Run in Web Worker to avoid blocking UI. |
-| Llama 3.2 3B can hallucinate | MCP grounding + system prompt enforcement + confidence thresholds. If no relevant course material found, Lumi says "I don't have that in your notes." |
+| Qwen3 4B can hallucinate | MCP grounding + system prompt enforcement + confidence thresholds. If no relevant course material found, Lumi says "I don't have that in your notes." |
 | active-win URL detection is unreliable on some browsers | Fall back to window title matching. Most distracting apps have distinctive titles. |
 | Electron window transparency has platform quirks | Test on macOS and Windows. Use `vibrancy` on macOS for better transparency. |
 | First Ollama request is slow (model loading) | Warm up the model on app start with a dummy request. Show "Lumi is waking up..." state. |
@@ -1896,7 +1896,7 @@ Ordered by impact-to-effort ratio:
 - [ ] `mcp-server/index.ts` — PDF indexing + search tools
 - [ ] `assets/lottie/*.json` — 5 character animation states
 - [ ] `assets/sounds/*.mp3` — 3 sound effects
-- [ ] Ollama installed + llama3.2:3b pulled
+- [ ] Ollama installed + qwen3:4b pulled
 - [ ] Sample course PDFs in `mcp-server/data/courses/`
 - [ ] `config/prompts.ts` — All LLM prompt templates
 - [ ] `config/distractions.ts` — App/URL blocklist

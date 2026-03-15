@@ -10,7 +10,7 @@ import { TriggerEngine, TriggerEvent } from './engine/trigger-engine'
 import { useLumiStore, ChatMessage, ChatAttachment } from './store/lumi-store'
 import LumiCharacter from './components/LumiCharacter'
 import ChatBubble from './components/ChatBubble'
-import { MicIndicator, OllamaIndicator } from './components/StatusIndicator'
+import { MicIndicator, QwenIndicator } from './components/StatusIndicator'
 
 import SessionSummary from './components/SessionSummary'
 import CalibrationOverlay from './components/CalibrationOverlay'
@@ -50,7 +50,7 @@ declare global {
     electronAPI: {
       getActiveWindow: () => Promise<{ title: string; owner: string; url: string | null } | null>
       captureScreen: () => Promise<string | null>
-      sendToGemini: (payload: {
+      sendToQwen: (payload: {
         triggerType: string
         ocrText: string
         userQuestion?: string
@@ -89,7 +89,7 @@ export default function App() {
     ttsEnabled, setTtsEnabled,
     sttEnabled, setSttEnabled,
     micStatus, setMicStatus,
-    ollamaStatus, setOllamaStatus,
+    qwenStatus, setQwenStatus,
     messages, addMessage, setMessages, clearMessages,
     lastOCRText, setLastOCRText,
     setSessionStartTime,
@@ -398,10 +398,10 @@ export default function App() {
     return () => clearInterval(timer)
   }, [isSprintRunning, sprintSecondsLeft, pushTimelineEvent])
 
-  // Mark AI as online (Gemini — no local server needed)
+  // Mark AI as online (Qwen local model is expected to run locally)
   useEffect(() => {
-    setOllamaStatus('online')
-  }, [setOllamaStatus])
+    setQwenStatus('online')
+  }, [setQwenStatus])
 
   // Initialize services on mount
   useEffect(() => {
@@ -574,7 +574,7 @@ export default function App() {
       }
       console.log('[LLM] Sending to LLM:', JSON.stringify(payload, null, 2))
 
-      const response = await window.electronAPI?.sendToGemini(payload)
+      const response = await window.electronAPI?.sendToQwen(payload)
       console.log('[LLM] Response:', JSON.stringify(response))
 
       const msg = response?.message ?? "Hey! I'm here if you need me."
@@ -679,7 +679,7 @@ export default function App() {
         syllabusContext = results.slice(0, 3).map((r: any) => r.text || r).join('\n\n')
       }
 
-      const response = await window.electronAPI?.sendToGemini({
+      const response = await window.electronAPI?.sendToQwen({
         triggerType: 'question',
         ocrText: lastOCRRef.current,
         driverState: latestDriverMetricsRef.current,
@@ -1054,7 +1054,7 @@ export default function App() {
             {/* Top bar: minimal */}
             <div className="relative z-10 px-5 pt-4 pb-2 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2">
-                <OllamaIndicator status={ollamaStatus} />
+                <QwenIndicator status={qwenStatus} />
                 {sttEnabled && <MicIndicator status={micStatus} />}
               </div>
               <div className="flex items-center gap-1">

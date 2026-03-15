@@ -23,12 +23,25 @@ py -m pip install mediapipe opencv-python websockets numpy
 ### 3. Configure environment
 Create a `.env` file in the `lumi/` root:
 ```
-GEMINI_API_KEY=your_gemini_api_key
-ELEVENLABS_API_KEY=your_elevenlabs_api_key    # optional, falls back to browser TTS
-ELEVENLABS_VOICE_ID=your_voice_id              # optional
+LOCAL_LLM_URL=http://127.0.0.1:11434/api/chat    # optional, default shown
+QWEN_MODEL=qwen3:4b                               # optional, default shown
+STT_API_URL=https://api.deepgram.com/v1/listen     # optional
+STT_MODEL=Canary-Qwen-2.5B                         # optional, default shown
+TTS_API_URL=https://api.elevenlabs.io/v1/text-to-speech/<voice_id>  # optional
+TTS_MODEL=Kokoro-82M                                # optional, default shown
+TTS_VOICE_ID=EXAVITQu4vr4xnSDxMaL                   # optional (ElevenLabs-compatible)
+DEEPGRAM_API_KEY=your_deepgram_api_key             # needed for deepgram.com endpoint
+ELEVENLABS_API_KEY=your_elevenlabs_api_key         # needed for elevenlabs.io endpoint
 ```
 
-### 4. Add course materials (optional)
+### 4. Install and start local model runtime
+Install your local runtime (for example Ollama), then pull and serve the model:
+```bash
+ollama pull qwen3:4b
+ollama serve
+```
+
+### 5. Add course materials (optional)
 Drop PDF files into `mcp-server/data/courses/` for syllabus-aware responses.
 
 ---
@@ -83,9 +96,10 @@ npm run dev
 - Check that no other app is using the webcam
 - The Driver State Detection terminal should show a debug window with face annotations
 
-**Gemini API errors?**
-- Check your `GEMINI_API_KEY` in `.env`
-- Free tier has rate limits — wait a minute and retry
+**Qwen runtime connection errors?**
+- Make sure `ollama serve` is running
+- Check that `LOCAL_LLM_URL` points to your local model API
+- Confirm the model exists: `ollama list`
 
 **Python `mediapipe` import error?**
 - Requires Python 3.11-3.13

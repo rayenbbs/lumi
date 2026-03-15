@@ -7,16 +7,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Screenshot capture
   captureScreen: () => ipcRenderer.invoke('capture-screen'),
 
-  // Gemini communication
-  sendToGemini: (payload: {
+  // Qwen communication
+  sendToQwen: (payload: {
     triggerType: string
     ocrText: string
     userQuestion?: string
     conversationHistory: Array<{ role: string; content: string }>
     syllabusContext?: string
-  }) => ipcRenderer.invoke('send-to-gemini', payload),
+  }) => ipcRenderer.invoke('send-to-qwen', payload),
 
-  // Speech-to-text (Deepgram)
+  // Speech-to-text
   transcribeAudio: async (blob: Blob) => {
     const arrayBuffer = await blob.arrayBuffer()
     return ipcRenderer.invoke('transcribe-audio', new Uint8Array(arrayBuffer)) as Promise<{ transcript: string }>
@@ -71,7 +71,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   saveSession: (data: any) => ipcRenderer.invoke('save-session', data),
   loadSession: () => ipcRenderer.invoke('load-session'),
 
-  // ElevenLabs TTS
+  // Text-to-speech
   textToSpeech: (text: string) => ipcRenderer.invoke('text-to-speech', text) as Promise<{ success: boolean; audio: string | null }>,
 
   // Drag & drop zone

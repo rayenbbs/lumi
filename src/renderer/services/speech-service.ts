@@ -4,7 +4,7 @@ export class SpeechService {
   private onTranscript: ((text: string) => void) | null = null
   private currentAudio: HTMLAudioElement | null = null
 
-  // MediaRecorder-based STT via Deepgram
+  // MediaRecorder-based STT via main-process transcription API
   private mediaStream: MediaStream | null = null
   private recorder: MediaRecorder | null = null
   private recordingLoop: ReturnType<typeof setInterval> | null = null

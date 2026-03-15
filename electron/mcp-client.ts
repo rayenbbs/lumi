@@ -175,7 +175,7 @@ export class LumiMcpClient {
     }
   }
 
-  /** Run the full Lumi chat pipeline (system prompt + Gemini). */
+  /** Run the full Lumi chat pipeline (system prompt + Qwen local model). */
   async chat(payload: {
     triggerType: string
     ocrText: string

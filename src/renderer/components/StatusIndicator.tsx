@@ -20,11 +20,11 @@ export function MicIndicator({ status }: MicIndicatorProps) {
   )
 }
 
-interface OllamaIndicatorProps {
+interface QwenIndicatorProps {
   status: 'unknown' | 'online' | 'offline'
 }
 
-export function OllamaIndicator({ status }: OllamaIndicatorProps) {
+export function QwenIndicator({ status }: QwenIndicatorProps) {
   const colors = {
     unknown: 'bg-white/20',
     online: 'bg-emerald-400',
