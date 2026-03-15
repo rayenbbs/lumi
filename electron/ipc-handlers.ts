@@ -1,8 +1,9 @@
-import { ipcMain, BrowserWindow, desktopCapturer, screen } from 'electron'
+import { ipcMain, BrowserWindow, desktopCapturer, screen, dialog } from 'electron'
 import { mainWindow } from './main'
 import Store from 'electron-store'
 import { getMcpClientSync } from './mcp-client'
 import path from 'path'
+import fs from 'fs'
 import { createHash } from 'crypto'
 import mammoth from 'mammoth'
 import { createWorker, Worker } from 'tesseract.js'
@@ -543,6 +544,83 @@ export function registerIpcHandlers(win: BrowserWindow) {
       return await mcpClient.searchSyllabus(query)
     } catch {
       return []
+    }
+  })
+
+  // === KNOWLEDGE BASE MANAGEMENT ===
+  const knowledgeDir = path.join(__dirname, '../../mcp-server/data/courses')
+
+  ipcMain.handle('list-knowledge-files', async () => {
+    try {
+      const mcpClient = getMcpClientSync()
+      if (mcpClient) {
+        return await mcpClient.callTool('list_sources')
+      }
+      // Fallback: read directory directly
+      if (!fs.existsSync(knowledgeDir)) return { sources: [] }
+      const files = fs.readdirSync(knowledgeDir).filter(f => f.endsWith('.pdf'))
+      return { sources: files.map(name => ({ name, chunks: 0 })) }
+    } catch {
+      return { sources: [] }
+    }
+  })
+
+  ipcMain.handle('add-knowledge-file', async () => {
+    try {
+      const result = await dialog.showOpenDialog(win, {
+        title: 'Add study material',
+        filters: [{ name: 'PDF Documents', extensions: ['pdf'] }],
+        properties: ['openFile', 'multiSelections'],
+      })
+
+      if (result.canceled || result.filePaths.length === 0) {
+        return { added: [] }
+      }
+
+      if (!fs.existsSync(knowledgeDir)) {
+        fs.mkdirSync(knowledgeDir, { recursive: true })
+      }
+
+      const added: string[] = []
+      for (const filePath of result.filePaths) {
+        const fileName = path.basename(filePath)
+        const dest = path.join(knowledgeDir, fileName)
+        fs.copyFileSync(filePath, dest)
+        added.push(fileName)
+        console.log('[Knowledge] Added:', fileName)
+      }
+
+      // Trigger MCP reindex
+      const mcpClient = getMcpClientSync()
+      if (mcpClient) {
+        await mcpClient.reindex()
+      }
+
+      return { added }
+    } catch (err: any) {
+      console.error('[Knowledge] add failed:', err?.message || err)
+      return { added: [], error: err?.message }
+    }
+  })
+
+  ipcMain.handle('remove-knowledge-file', async (_event, fileName: string) => {
+    try {
+      const filePath = path.join(knowledgeDir, fileName)
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath)
+        console.log('[Knowledge] Removed:', fileName)
+      }
+
+      // Trigger MCP reindex
+      const mcpClient = getMcpClientSync()
+      if (mcpClient) {
+        await mcpClient.reindex()
+      }
+
+      return { removed: true }
+    } catch (err: any) {
+      console.error('[Knowledge] remove failed:', err?.message || err)
+      return { removed: false, error: err?.message }
     }
   })
 

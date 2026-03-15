@@ -64,6 +64,9 @@ declare global {
         error?: string
       }>
       searchSyllabus: (query: string) => Promise<any[]>
+      listKnowledgeFiles: () => Promise<{ sources: Array<{ name: string; chunks: number }> }>
+      addKnowledgeFile: () => Promise<{ added: string[]; error?: string }>
+      removeKnowledgeFile: (fileName: string) => Promise<{ removed: boolean; error?: string }>
       setClickThrough: (enable: boolean) => Promise<void>
       resizeWindow: (w: number, h: number) => Promise<void>
       saveSession: (data: any) => Promise<boolean>
@@ -105,6 +108,7 @@ export default function App() {
   const [sprintSecondsLeft, setSprintSecondsLeft] = useState(25 * 60)
   const [isSprintRunning, setIsSprintRunning] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
+  const [knowledgeSources, setKnowledgeSources] = useState<Array<{ name: string; chunks: number }>>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -719,6 +723,43 @@ export default function App() {
     pushTimelineEvent('platform_action', `Removed distracting site rule: ${value}`)
   }, [pushTimelineEvent])
 
+  // ─── KNOWLEDGE BASE ──────────────────────────────────────────────────────
+  const refreshKnowledgeSources = useCallback(async () => {
+    try {
+      const result = await window.electronAPI?.listKnowledgeFiles()
+      setKnowledgeSources(result?.sources || [])
+    } catch {
+      setKnowledgeSources([])
+    }
+  }, [])
+
+  const handleAddKnowledgeFile = useCallback(async () => {
+    try {
+      const result = await window.electronAPI?.addKnowledgeFile()
+      if (result?.added?.length) {
+        pushTimelineEvent('platform_action', `Added ${result.added.length} study material(s)`)
+        await refreshKnowledgeSources()
+      }
+    } catch (err) {
+      console.warn('[Knowledge] add failed:', err)
+    }
+  }, [pushTimelineEvent, refreshKnowledgeSources])
+
+  const handleRemoveKnowledgeFile = useCallback(async (fileName: string) => {
+    try {
+      await window.electronAPI?.removeKnowledgeFile(fileName)
+      pushTimelineEvent('platform_action', `Removed study material: ${fileName}`)
+      await refreshKnowledgeSources()
+    } catch (err) {
+      console.warn('[Knowledge] remove failed:', err)
+    }
+  }, [pushTimelineEvent, refreshKnowledgeSources])
+
+  // Load knowledge sources on mount
+  useEffect(() => {
+    refreshKnowledgeSources()
+  }, [refreshKnowledgeSources])
+
   const outcomeSignals = [
     { label: 'Focus sessions', value: `${focusSessionsCount} today` },
     { label: 'Drifts recovered', value: `${liveSessionStats?.distractionCount ?? 0} redirects` },
@@ -885,6 +926,9 @@ export default function App() {
                   }}
                   sprintMinutes={sprintMinutes}
                   onSprintMinutesChange={handleSprintMinutesChange}
+                  knowledgeSources={knowledgeSources}
+                  onAddKnowledgeFile={handleAddKnowledgeFile}
+                  onRemoveKnowledgeFile={handleRemoveKnowledgeFile}
                 />
               )}
             </AnimatePresence>

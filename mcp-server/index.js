@@ -396,6 +396,11 @@ const TOOL_DEFINITIONS = [
     description: 'Get server health status: number of indexed chunks, loaded PDFs, and whether Gemini API key is configured.',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'list_sources',
+    description: 'List all indexed knowledge source files with their chunk counts.',
+    inputSchema: { type: 'object', properties: {} },
+  },
 ]
 
 async function handleToolCall(name, args) {
@@ -453,6 +458,18 @@ async function handleToolCall(name, args) {
             geminiConfigured: !!GEMINI_API_KEY,
           }),
         }],
+      }
+    }
+
+    case 'list_sources': {
+      // Group chunks by source file
+      const sourceCounts = new Map()
+      for (const chunk of courseIndex) {
+        sourceCounts.set(chunk.source, (sourceCounts.get(chunk.source) || 0) + 1)
+      }
+      const sources = [...sourceCounts.entries()].map(([name, chunks]) => ({ name, chunks }))
+      return {
+        content: [{ type: 'text', text: JSON.stringify({ sources }) }],
       }
     }
 

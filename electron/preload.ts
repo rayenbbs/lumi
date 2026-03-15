@@ -25,6 +25,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // MCP syllabus search
   searchSyllabus: (query: string) => ipcRenderer.invoke('search-syllabus', query),
 
+  // Knowledge base management
+  listKnowledgeFiles: () => ipcRenderer.invoke('list-knowledge-files') as Promise<{ sources: Array<{ name: string; chunks: number }> }>,
+  addKnowledgeFile: () => ipcRenderer.invoke('add-knowledge-file') as Promise<{ added: string[]; error?: string }>,
+  removeKnowledgeFile: (fileName: string) => ipcRenderer.invoke('remove-knowledge-file', fileName) as Promise<{ removed: boolean; error?: string }>,
+
   // Attachment processing (main process parsing)
   processAttachments: (attachments: Array<{ id: string; name: string; size: number; type: string; dataUrl: string }>) =>
     ipcRenderer.invoke('process-attachments', attachments) as Promise<{

@@ -1,6 +1,11 @@
 import { motion } from 'framer-motion'
 import { useState } from 'react'
 
+interface KnowledgeSource {
+  name: string
+  chunks: number
+}
+
 interface SettingsPanelProps {
   onClose: () => void
   customDistractingApps: string[]
@@ -13,6 +18,9 @@ interface SettingsPanelProps {
   onToggleSTT: () => void
   sprintMinutes: number
   onSprintMinutesChange: (value: number) => void
+  knowledgeSources: KnowledgeSource[]
+  onAddKnowledgeFile: () => void
+  onRemoveKnowledgeFile: (fileName: string) => void
 }
 
 export default function SettingsPanel({
@@ -27,6 +35,9 @@ export default function SettingsPanel({
   onToggleSTT,
   sprintMinutes,
   onSprintMinutesChange,
+  knowledgeSources,
+  onAddKnowledgeFile,
+  onRemoveKnowledgeFile,
 }: SettingsPanelProps) {
   const [appInput, setAppInput] = useState('')
   const [urlInput, setUrlInput] = useState('')
@@ -44,6 +55,8 @@ export default function SettingsPanel({
     onAddDistractingUrl(value)
     setUrlInput('')
   }
+
+  const totalChunks = knowledgeSources.reduce((sum, s) => sum + s.chunks, 0)
 
   return (
     <motion.div
@@ -72,7 +85,59 @@ export default function SettingsPanel({
       {/* Content */}
       <div className="relative z-10 flex-1 overflow-y-auto px-5 pb-5 space-y-6">
 
-        {/* Voice & Timer */}
+        {/* Knowledge Base */}
+        <div className="space-y-3">
+          <h3 className="text-[13px] font-medium text-white/60 uppercase tracking-wider">Knowledge Base</h3>
+          <p className="text-[12px] text-white/35">
+            Add your course PDFs so Lumi can reference them when you're stuck
+          </p>
+
+          <button
+            onClick={onAddKnowledgeFile}
+            className="cursor-pointer w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-purple-400/25 bg-purple-500/[0.06] hover:bg-purple-500/[0.12] hover:border-purple-400/40 transition-all px-4 py-3.5"
+          >
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+              <path d="M9 3v12M3 9h12" stroke="rgba(192,170,255,0.7)" strokeWidth="1.5" strokeLinecap="round" />
+            </svg>
+            <span className="text-[13px] text-purple-200/70">Add PDF files</span>
+          </button>
+
+          {knowledgeSources.length > 0 && (
+            <div className="space-y-1.5">
+              {knowledgeSources.map((source) => (
+                <div
+                  key={source.name}
+                  className="flex items-center gap-3 rounded-xl bg-white/[0.04] border border-white/[0.06] px-3.5 py-2.5 group"
+                >
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="shrink-0">
+                    <path d="M4 1h5l4 4v9a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z" stroke="rgba(192,170,255,0.5)" strokeWidth="1.2" />
+                    <path d="M9 1v4h4" stroke="rgba(192,170,255,0.5)" strokeWidth="1.2" />
+                  </svg>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[13px] text-white/80 truncate">{source.name}</p>
+                    {source.chunks > 0 && (
+                      <p className="text-[11px] text-white/30">{source.chunks} indexed chunks</p>
+                    )}
+                  </div>
+                  <button
+                    onClick={() => onRemoveKnowledgeFile(source.name)}
+                    className="cursor-pointer shrink-0 w-7 h-7 rounded-lg flex items-center justify-center text-white/20 opacity-0 group-hover:opacity-100 hover:text-red-400 hover:bg-red-500/10 transition-all"
+                    title="Remove"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                      <path d="M9 3L3 9M3 3l6 6" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  </button>
+                </div>
+              ))}
+              <p className="text-[11px] text-white/25 pt-1">
+                {knowledgeSources.length} file{knowledgeSources.length !== 1 ? 's' : ''} · {totalChunks} chunks indexed
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Preferences */}
         <div className="space-y-3">
           <h3 className="text-[13px] font-medium text-white/60 uppercase tracking-wider">Preferences</h3>
 
