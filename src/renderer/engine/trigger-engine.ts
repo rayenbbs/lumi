@@ -1,4 +1,4 @@
-import { EyeMetrics } from '../services/eye-tracker'
+import { DriverStateMetrics } from '../services/driver-state'
 import { isDistractingWindow, isStudyWindow } from '../config/distractions'
 import { CONFIG } from '../config/constants'
 
@@ -11,6 +11,8 @@ export type TriggerType =
   | 'session_end'
   | 'proactive_bridge'
   | 'question'
+  | 'asleep'
+  | 'tired'
   | null
 
 export type LumiState =
@@ -47,6 +49,10 @@ export class TriggerEngine {
 
   // Wandering tracking
   private offScreenStartTime: number | null = null
+
+  // Stuck tracking based on unchanged OCR text mapping since gaze isn't granular here
+  private lastOcrText: string = ''
+  private lastOcrChangeTime: number = Date.now()
 
   private onTrigger: ((event: TriggerEvent) => void) | null = null
 
@@ -97,7 +103,7 @@ export class TriggerEngine {
 
   // === MAIN UPDATE — Call every 500ms ===
   update(
-    eyeMetrics: EyeMetrics | null,
+    driverMetrics: DriverStateMetrics | null,
     activeWindow: ActiveWindowInfo | null,
     ocrText: string
   ) {
@@ -116,34 +122,43 @@ export class TriggerEngine {
 
     const now = Date.now()
 
-    // Respect minimum gap between interventions
-    if (now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) {
+    // Respect minimum gap between interventions, EXCEPT for falling asleep and distraction (immediate)
+    const isAsleepNow = driverMetrics?.asleep;
+    const isDistractedNow = activeWindow && isDistractingWindow(activeWindow);
+    if (!isAsleepNow && !isDistractedNow && now - this.lastInterventionTime < CONFIG.MIN_INTERVENTION_GAP) {
       console.log('[TRIGGER] skip: intervention gap, wait', Math.round((CONFIG.MIN_INTERVENTION_GAP - (now - this.lastInterventionTime)) / 1000), 's')
       return
     }
 
-    // 1. Distraction (highest priority)
+    // 0. Driver State checks (highest priority, especially asleep)
+    if (driverMetrics) {
+      const asleep = this.checkAsleep(driverMetrics, now)
+      if (asleep) { this.fireTrigger(asleep); return }
+
+      const tired = this.checkTired(driverMetrics, now)
+      if (tired) { this.fireTrigger(tired); return }
+    }
+
+    // 1. Distraction (high priority)
     if (activeWindow) {
       console.log('[TRIGGER] checking distraction:', activeWindow.owner, '|', activeWindow.title, '| isDistracting:', isDistractingWindow(activeWindow))
     }
     const distraction = this.checkDistraction(activeWindow, now)
     if (distraction) { this.fireTrigger(distraction); return }
 
-    // 2. Eye-based checks
-    if (eyeMetrics) {
-      const stuck = this.checkStuck(eyeMetrics, ocrText, now)
-      if (stuck) { this.fireTrigger(stuck); return }
-
-      const fatigue = this.checkFatigue(eyeMetrics, ocrText, now)
-      if (fatigue) { this.fireTrigger(fatigue); return }
-
-      const wandering = this.checkWandering(eyeMetrics, now)
+    // 2. Head/Pose based Wandering
+    if (driverMetrics) {
+      const wandering = this.checkWandering(driverMetrics, now)
       if (wandering) { this.fireTrigger(wandering); return }
-    } else {
-      // No eye tracking — just check session-based fatigue
-      const sessionFatigue = this.checkSessionFatigue(ocrText, now)
-      if (sessionFatigue) { this.fireTrigger(sessionFatigue); return }
     }
+
+    // 3. OCR Text Stuck Check
+    const stuck = this.checkStuck(ocrText, now)
+    if (stuck) { this.fireTrigger(stuck); return }
+
+    // 4. Session fatigue
+    const sessionFatigue = this.checkSessionFatigue(ocrText, now)
+    if (sessionFatigue) { this.fireTrigger(sessionFatigue); return }
   }
 
   private checkDistraction(
@@ -177,62 +192,38 @@ export class TriggerEngine {
         }
       }
     } else if (this.distractionStartTime) {
-      // Was on a distracting window, now on something else.
-      // Only reset after 3s of sustained non-distracting focus
-      // (handles brief bounces to Lumi/Electron/taskbar)
-      if (!this.nonDistractingStartTime) {
-        this.nonDistractingStartTime = now
-      }
-      if (now - this.nonDistractingStartTime > 3000) {
-        console.log('[TRIGGER] distraction timer reset — student returned to non-distracting window')
-        this.distractionStartTime = null
-        this.nonDistractingStartTime = null
-        this.distractionNudgeCount = 0
-      }
+      // Student returned to a non-distracting window — reset immediately
+      console.log('[TRIGGER] distraction timer reset — student returned to non-distracting window')
+      this.distractionStartTime = null
+      this.nonDistractingStartTime = null
+      this.distractionNudgeCount = 0
     }
 
     return null
   }
 
   private checkStuck(
-    metrics: EyeMetrics,
     ocrText: string,
     now: number
   ): TriggerEvent | null {
     if (this.isOnCooldown('stuck', now)) return null
 
-    if (
-      metrics.stationaryDuration > CONFIG.STUCK_THRESHOLD_SECS &&
-      metrics.gazeVelocity < CONFIG.GAZE_VELOCITY_STUCK
-    ) {
-      return {
-        type: 'stuck',
-        confidence: Math.min(metrics.stationaryDuration / 60, 1),
-        context: ocrText.substring(0, 500),
-        timestamp: now,
-      }
+    // Track text changes to see if they're progressing
+    if (ocrText !== this.lastOcrText && ocrText.length > 50) {
+      // Allow minor variations or mostly empty screens not to reset too eagerly,
+      // but otherwise reset the stuck timer
+      this.lastOcrText = ocrText
+      this.lastOcrChangeTime = now
+      return null
     }
 
-    return null
-  }
+    const stuckDuration = (now - this.lastOcrChangeTime) / 1000
 
-  private checkFatigue(
-    metrics: EyeMetrics,
-    ocrText: string,
-    now: number
-  ): TriggerEvent | null {
-    if (this.isOnCooldown('fatigue', now)) return null
-
-    const timeSinceBreak = this.lastBreakTime ? now - this.lastBreakTime : 0
-    const isBlinkFatigued = metrics.blinkRate > CONFIG.FATIGUE_BLINK_THRESHOLD
-    const isSessionLong = timeSinceBreak > CONFIG.FATIGUE_SESSION_THRESHOLD
-
-    if (isBlinkFatigued || isSessionLong) {
-      const sessionMinutes = Math.round(timeSinceBreak / 60_000)
+    if (stuckDuration > CONFIG.STUCK_THRESHOLD_SECS && ocrText.length > 50) {
       return {
-        type: 'fatigue',
-        confidence: isBlinkFatigued && isSessionLong ? 1 : 0.7,
-        context: `Session: ${sessionMinutes} min. Blink rate: ${metrics.blinkRate}/min. Topic: ${ocrText.substring(0, 200)}`,
+        type: 'stuck',
+        confidence: Math.min(stuckDuration / 60, 1),
+        context: ocrText.substring(0, 500),
         timestamp: now,
       }
     }
@@ -255,12 +246,12 @@ export class TriggerEngine {
   }
 
   private checkWandering(
-    metrics: EyeMetrics,
+    metrics: DriverStateMetrics,
     now: number
   ): TriggerEvent | null {
     if (this.isOnCooldown('wandering', now)) return null
 
-    if (!metrics.isOnScreen) {
+    if (metrics.looking_away || metrics.distracted) {
       if (!this.offScreenStartTime) {
         this.offScreenStartTime = now
       }
@@ -268,8 +259,8 @@ export class TriggerEngine {
         this.offScreenStartTime = null
         return {
           type: 'wandering',
-          confidence: 0.6,
-          context: 'Student has been looking away from screen.',
+          confidence: 0.8,
+          context: 'Student has been looking away from screen or physically distracted.',
           timestamp: now,
         }
       }
@@ -277,6 +268,32 @@ export class TriggerEngine {
       this.offScreenStartTime = null
     }
 
+    return null
+  }
+
+  private checkAsleep(metrics: DriverStateMetrics, now: number): TriggerEvent | null {
+    if (this.isOnCooldown('asleep', now)) return null
+    if (metrics.asleep) {
+      return {
+        type: 'asleep',
+        confidence: 0.9,
+        context: 'Student appears to be fully asleep. WAKE THEM UP with a high energy message.',
+        timestamp: now,
+      }
+    }
+    return null
+  }
+
+  private checkTired(metrics: DriverStateMetrics, now: number): TriggerEvent | null {
+    if (this.isOnCooldown('tired', now)) return null
+    if (metrics.tired || metrics.perclos > 0.15) {
+      return {
+        type: 'tired',
+        confidence: 0.8,
+        context: `Student is very tired. PERCLOS score: ${metrics.perclos.toFixed(2)}. Suggest a short break.`,
+        timestamp: now,
+      }
+    }
     return null
   }
 
@@ -289,6 +306,8 @@ export class TriggerEngine {
       stuck: CONFIG.STUCK_COOLDOWN,
       fatigue: CONFIG.FATIGUE_COOLDOWN,
       wandering: CONFIG.WANDERING_COOLDOWN,
+      asleep: 10000,   // Wake up again after 10 seconds if still asleep
+      tired: 60000,    // Don't nag them about being tired more than once a minute
     }
 
     return now - lastFired < (cooldowns[triggerType] ?? CONFIG.MIN_INTERVENTION_GAP)

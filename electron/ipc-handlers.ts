@@ -475,14 +475,16 @@ export function registerIpcHandlers(win: BrowserWindow) {
         triggerType,
         ocrText,
         userQuestion,
+        driverState,
         conversationHistory,
         syllabusContext,
       } = payload
 
-      const systemPrompt = buildSystemPrompt(triggerType, ocrText, syllabusContext)
+      const systemPrompt = buildSystemPrompt(triggerType, ocrText, syllabusContext, driverState)
 
       console.log('[LLM] triggerType:', triggerType)
       console.log('[LLM] ocrText:', ocrText?.substring(0, 300))
+      console.log('[LLM] driverState:', JSON.stringify(driverState))
       console.log('[LLM] systemPrompt:', systemPrompt.substring(0, 500))
 
       // Convert conversation history — Gemini uses "model" not "assistant"
@@ -779,7 +781,19 @@ export function registerIpcHandlers(win: BrowserWindow) {
 function buildSystemPrompt(
   triggerType: string,
   ocrText: string,
-  syllabusContext?: string
+  syllabusContext?: string,
+  driverState?: {
+    tired?: boolean
+    asleep?: boolean
+    looking_away?: boolean
+    distracted?: boolean
+    ear?: number
+    perclos?: number
+    gaze?: number
+    roll?: number
+    pitch?: number
+    yaw?: number
+  } | null
 ): string {
   const base = `You are Lumi, an AI study companion that lives on a student's desktop as a small animated character. You were built to help neurodivergent students (ADHD, Autism, Dyslexia) stay focused while studying.
 
@@ -804,7 +818,10 @@ RESPONSE RULES:
 - Never condescending, never scolding, never guilt-tripping.
 - 1 emoji max per message.
 - NEVER make up information. Only reference material if provided below.
-- NEVER ignore the trigger type. If the trigger says "distraction", your response MUST be about redirecting the student back to studying.${syllabusContext ? `\n\nRELEVANT COURSE MATERIAL:\n${syllabusContext}` : ''}`
+- NEVER ignore the trigger type. If the trigger says "distraction", your response MUST be about redirecting the student back to studying.
+
+LATEST DRIVER-STATE SNAPSHOT:
+${driverState ? JSON.stringify(driverState) : 'No driver-state metrics available'}${syllabusContext ? `\n\nRELEVANT COURSE MATERIAL:\n${syllabusContext}` : ''}`
 
   const triggerContexts: Record<string, string> = {
     distraction: `TRIGGER: DISTRACTION DETECTED
@@ -843,11 +860,27 @@ YOUR RESPONSE MUST:
 2. Offer to help break down the concept in simpler terms
 3. Reference the specific content they're looking at if possible`,
 
-    fatigue: `TRIGGER: FATIGUE DETECTED
-The student is showing signs of tiredness (high blink rate or long study session without breaks).
+      asleep: `TRIGGER: STUDENT FELL ASLEEP
+The student has physically closed their eyes or fallen asleep during study.
+
+YOUR RESPONSE MUST:
+1. Be very high energy and loud! Tell them to wake up!
+2. Suggest taking a real break or getting a coffee, instead of sleeping at the desk.
+3. Keep it brief and impactful.
+DO NOT talk about the course material right now.`,
+
+      tired: `TRIGGER: DEEP FATIGUE
+The driver-state model has detected high PERCLOS (eye closure duration) meaning the student is deeply fatigued.
+
+YOUR RESPONSE MUST:
+1. Express concern for their physical tiredness gently.
+2. Tell them they've been doing great, but looking at a screen this tired is counterproductive.
+3. Suggest a 5-minute break to close their eyes and stretch.`,
+
+      fatigue: `TRIGGER: FATIGUE DETECTED
+The student is showing signs of moderate tiredness (high blink rate or long study session without breaks).
 
 Study context: ${ocrText.substring(0, 200)}
-
 YOUR RESPONSE MUST:
 1. Suggest taking a short break
 2. Celebrate how long they've been studying

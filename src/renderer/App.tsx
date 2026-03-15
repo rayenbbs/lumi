@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { EyeTrackerService, EyeMetrics } from './services/eye-tracker'
+import { DriverStateService, DriverStateMetrics } from './services/driver-state'
 import { OCRService } from './services/ocr-service'
 import { SpeechService } from './services/speech-service'
 import { SessionTracker } from './services/session-tracker'
@@ -10,7 +10,7 @@ import { TriggerEngine, TriggerEvent } from './engine/trigger-engine'
 import { useLumiStore, ChatMessage, ChatAttachment } from './store/lumi-store'
 import LumiCharacter from './components/LumiCharacter'
 import ChatBubble from './components/ChatBubble'
-import { EyeIndicator, MicIndicator, OllamaIndicator } from './components/StatusIndicator'
+import { MicIndicator, OllamaIndicator } from './components/StatusIndicator'
 import BionicReader from './components/BionicReader'
 import SessionSummary from './components/SessionSummary'
 import CalibrationOverlay from './components/CalibrationOverlay'
@@ -53,6 +53,7 @@ declare global {
         triggerType: string
         ocrText: string
         userQuestion?: string
+        driverState?: DriverStateMetrics | null
         conversationHistory: Array<{ role: string; content: string }>
         syllabusContext?: string
       }) => Promise<{ success: boolean; message: string }>
@@ -77,8 +78,6 @@ export default function App() {
     isThinking, setIsThinking,
     showBionicReader, setShowBionicReader,
     showSessionSummary, setShowSessionSummary,
-    showCalibration, setShowCalibration,
-    eyeStatus, setEyeStatus,
     micStatus, setMicStatus,
     ollamaStatus, setOllamaStatus,
     messages, addMessage, setMessages, clearMessages,
@@ -90,7 +89,6 @@ export default function App() {
   const [liveSessionStats, setLiveSessionStats] = useState<SessionStats | null>(null)
   const [focusScore, setFocusScore] = useState(0)
   const [inputText, setInputText] = useState('')
-  const [gazePosition, setGazePosition] = useState<{ x: number; y: number } | null>(null)
   const [isSpeaking, setIsSpeaking] = useState(false)
   const [activeTab, setActiveTab] = useState<SideTab>('platform')
   const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
@@ -110,15 +108,14 @@ export default function App() {
 
   // Service refs (stable across renders)
   const engineRef = useRef(new TriggerEngine())
-  const eyeTrackerRef = useRef<EyeTrackerService | null>(null)
+  const driverStateRef = useRef<DriverStateService | null>(null)
   const ocrServiceRef = useRef<OCRService | null>(null)
   const speechServiceRef = useRef<SpeechService | null>(null)
   const sessionTrackerRef = useRef(new SessionTracker())
   const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([])
 
-  // Guard against double-starting the engine session (e.g. calibration done + fallback)
+  // Guard against double-starting the engine session
   const engineSessionStartedRef = useRef(false)
-  const eyeTrackerInitializedRef = useRef(false)
 
   const startEngineSessionOnce = useCallback(() => {
     if (engineSessionStartedRef.current) return
@@ -132,7 +129,7 @@ export default function App() {
   const windowLoopRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Latest metrics (updated outside React cycle for perf)
-  const latestMetricsRef = useRef<EyeMetrics | null>(null)
+  const latestDriverMetricsRef = useRef<DriverStateMetrics | null>(null)
   const latestWindowRef = useRef<any>(null)
   const lastOCRRef = useRef('')
 
@@ -212,22 +209,6 @@ export default function App() {
   useEffect(() => {
     lastOCRRef.current = lastOCRText
   }, [lastOCRText])
-
-  // Sync gaze position from eye tracker ref into React state (RAF loop)
-  useEffect(() => {
-    if (eyeStatus !== 'active') {
-      setGazePosition(null)
-      return
-    }
-    let animId: number
-    const loop = () => {
-      const pos = latestMetricsRef.current?.gazePosition ?? null
-      setGazePosition(pos)
-      animId = requestAnimationFrame(loop)
-    }
-    animId = requestAnimationFrame(loop)
-    return () => cancelAnimationFrame(animId)
-  }, [eyeStatus])
 
   // Scroll to bottom when messages change
   useEffect(() => {
@@ -339,6 +320,9 @@ export default function App() {
       await ocr.initialize()
       ocrServiceRef.current = ocr
 
+      driverStateRef.current = new DriverStateService()
+      await driverStateRef.current.initialize()
+
       // Speech
       const speech = new SpeechService()
       const speechOk = speech.initialize()
@@ -347,12 +331,10 @@ export default function App() {
       }
       speechServiceRef.current = speech
 
-      // Eye tracker instance (not started yet — wait for session)
-      eyeTrackerRef.current = new EyeTrackerService()
-      eyeTrackerRef.current.setMetricsCallback((metrics) => {
-        latestMetricsRef.current = metrics
+      driverStateRef.current.setMetricsCallback((metrics) => {
+        latestDriverMetricsRef.current = metrics
       })
-
+      
       // Trigger engine callback
       engineRef.current.setTriggerCallback(handleTrigger)
     }
@@ -361,7 +343,7 @@ export default function App() {
 
     return () => {
       stopAllLoops()
-      eyeTrackerRef.current?.destroy()
+      driverStateRef.current?.destroy()
       ocrServiceRef.current?.destroy()
       speechServiceRef.current?.destroy()
     }
@@ -372,7 +354,6 @@ export default function App() {
     clearMessages()
     conversationHistoryRef.current = []
     engineSessionStartedRef.current = false
-    eyeTrackerInitializedRef.current = false
     sessionTrackerRef.current.start()
     setLiveSessionStats(sessionTrackerRef.current.getStats())
     setFocusSessionsCount((prev) => prev + 1)
@@ -384,31 +365,16 @@ export default function App() {
     pushTimelineEvent('session_start', 'Session started')
     setSessionStartTime(Date.now())
 
-    // Start eye tracking (optional; do not block session if missing)
-    const hasWebgazer = CONFIG.EYE_TRACKING_ENABLED && typeof (window as any).webgazer !== 'undefined'
-    if (hasWebgazer && eyeTrackerRef.current) {
-      setEyeStatus('calibrating')
-      const ok = await eyeTrackerRef.current.initialize()
-      eyeTrackerInitializedRef.current = ok
-      if (ok) {
-        setShowCalibration(true)
-      } else {
-        setEyeStatus('off')
-        setShowCalibration(false)
-        setLumiState('watching')
-        startEngineSessionOnce()
-      }
-    } else {
-      setEyeStatus('off')
-      setShowCalibration(false)
-      setLumiState('watching')
-      startEngineSessionOnce()
-    }
-
+    setLumiState('watching')
+    startEngineSessionOnce()
     // Start mic
     if (speechServiceRef.current) {
       speechServiceRef.current.startListening()
       setMicStatus('listening')
+    }
+
+    if (driverStateRef.current) {
+      driverStateRef.current.startTracking()
     }
 
     // Start window polling
@@ -425,7 +391,7 @@ export default function App() {
     // Start trigger engine update loop
     updateLoopRef.current = setInterval(() => {
       engineRef.current.update(
-        latestMetricsRef.current,
+        latestDriverMetricsRef.current,
         latestWindowRef.current,
         lastOCRRef.current
       )
@@ -447,30 +413,7 @@ export default function App() {
       }
     }, CONFIG.OCR_INTERVAL)
 
-    // If calibration is shown, engine session starts on skip/complete
-  }, [clearMessages, pushTimelineEvent, setEyeStatus, setMicStatus, setSessionStartTime, setLastOCRText, setShowCalibration, setLumiState, sprintMinutes, startEngineSessionOnce])
-
-  const onCalibrationDone = useCallback(() => {
-    setShowCalibration(false)
-    setEyeStatus(eyeTrackerInitializedRef.current ? 'active' : 'off')
-    setLumiState('watching')
-    startEngineSessionOnce()
-    setIsExpanded(false)
-  }, [setShowCalibration, setEyeStatus, setLumiState, setIsExpanded, startEngineSessionOnce])
-
-  const onCalibrationSkip = useCallback(async () => {
-    setShowCalibration(false)
-    // If initialization already happened in startSession, just reflect it.
-    // Otherwise, try initializing now (still optional).
-    if (!eyeTrackerInitializedRef.current && typeof (window as any).webgazer !== 'undefined' && eyeTrackerRef.current) {
-      const ok = await eyeTrackerRef.current.initialize()
-      eyeTrackerInitializedRef.current = ok
-    }
-
-    setEyeStatus(eyeTrackerInitializedRef.current ? 'active' : 'off')
-    setLumiState('watching')
-    startEngineSessionOnce()
-  }, [setShowCalibration, setEyeStatus, setLumiState, startEngineSessionOnce])
+  }, [clearMessages, setMicStatus, setSessionStartTime, setLastOCRText, setLumiState, startEngineSessionOnce])
 
   // ─── STOP SESSION ─────────────────────────────────────────────────────────
   const stopSession = useCallback(() => {
@@ -532,6 +475,7 @@ export default function App() {
       const payload = {
         triggerType: event.type,
         ocrText: event.context,
+        driverState: latestDriverMetricsRef.current,
         conversationHistory: history,
         syllabusContext,
       }
@@ -641,6 +585,7 @@ export default function App() {
       const response = await window.electronAPI?.sendToGemini({
         triggerType: 'question',
         ocrText: lastOCRRef.current,
+        driverState: latestDriverMetricsRef.current,
         userQuestion: finalQuestion + attachmentContext,
         conversationHistory: conversationHistoryRef.current.slice(-CONFIG.CONVERSATION_CONTEXT_MESSAGES),
         syllabusContext,
@@ -864,16 +809,9 @@ export default function App() {
 
       {/* ── FULLSCREEN OVERLAYS (calibration, bionic reader, session summary) ── */}
       <AnimatePresence>
-        {showCalibration && (
-          <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
-            <CalibrationOverlay onComplete={onCalibrationDone} onSkip={onCalibrationSkip} />
-          </div>
-        )}
-      </AnimatePresence>
-      <AnimatePresence>
         {showBionicReader && (
           <div className="pointer-events-auto" onMouseEnter={handleMouseEnterUI} onMouseLeave={handleMouseLeaveUI}>
-            <BionicReader text={lastOCRText} gazePosition={gazePosition} onClose={() => setShowBionicReader(false)} />
+            <BionicReader text={lastOCRText} onClose={() => setShowBionicReader(false)} />
           </div>
         )}
       </AnimatePresence>
@@ -909,7 +847,6 @@ export default function App() {
             <div className="relative z-10 px-4 pt-4 pb-2 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-2.5">
                 <OllamaIndicator status={ollamaStatus} />
-                <EyeIndicator status={eyeStatus} />
                 <MicIndicator status={micStatus} />
               </div>
               <div className="flex items-center gap-1.5">
@@ -1108,11 +1045,6 @@ export default function App() {
         )}
       </AnimatePresence>
 
-      {/* ── GAZE DOT ── */}
-      {eyeStatus === 'active' && gazePosition && (
-        <div className="gaze-cursor" style={{ left: gazePosition.x, top: gazePosition.y }} />
-      )}
-
       {/* ── LUMI CHARACTER (draggable) ── */}
       <div
         className="group absolute z-40 flex flex-col items-center gap-1 pointer-events-auto cursor-grab active:cursor-grabbing"
@@ -1148,3 +1080,6 @@ export default function App() {
     </div>
   )
 }
+
+
+

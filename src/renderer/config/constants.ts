@@ -4,8 +4,8 @@ export const CONFIG = {
   EYE_TRACKING_ENABLED: false,        // set true to enable WebGazer flow
 
   // Distraction detection
-  DISTRACTION_GRACE_PERIOD: 10_000,    // 10s before flagging distraction
-  DISTRACTION_COOLDOWN: 30_000,        // 30s between distraction nudges
+  DISTRACTION_GRACE_PERIOD: 5_000,     // 5s before flagging distraction
+  DISTRACTION_COOLDOWN: 20_000,       // 10s between distraction nudges
 
   // Stuck detection
   STUCK_THRESHOLD_SECS: 60,            // 60s staring at same area
