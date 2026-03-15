@@ -396,12 +396,27 @@ export function registerIpcHandlers(win: BrowserWindow) {
   // === SCREENSHOT CAPTURE ===
   ipcMain.handle('capture-screen', async () => {
     try {
+      const display = screen.getPrimaryDisplay()
+      const { width, height } = display.size
+      const scaleFactor = display.scaleFactor || 1
+
+      // Capture at native resolution for sharp text
       const sources = await desktopCapturer.getSources({
         types: ['screen'],
-        thumbnailSize: { width: 1280, height: 720 },
+        thumbnailSize: {
+          width: Math.round(width * scaleFactor),
+          height: Math.round(height * scaleFactor),
+        },
       })
       if (sources.length === 0) return null
-      return sources[0].thumbnail.toDataURL()
+
+      // Crop out bottom taskbar (~48px) and right side where Lumi panel sits (~420px)
+      const img = sources[0].thumbnail
+      const cropW = Math.round(img.getSize().width * 0.7)  // Left 70% (exclude Lumi panel)
+      const cropH = Math.round(img.getSize().height * 0.93) // Top 93% (exclude taskbar)
+      const cropped = img.crop({ x: 0, y: 0, width: cropW, height: cropH })
+
+      return cropped.toDataURL()
     } catch (err) {
       console.warn('[IPC] capture-screen failed:', err)
       return null
