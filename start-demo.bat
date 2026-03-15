@@ -4,23 +4,26 @@ echo    LUMI - AI Study Companion
 echo =============================================
 echo.
 
-:: Check if Ollama is running
-curl -s http://localhost:11434/api/tags >nul 2>&1
+:: 1. Check Python dependencies
+echo [1/4] Checking Python dependencies...
+py -m pip show mediapipe >nul 2>&1
 if %errorlevel% neq 0 (
-    echo [1/3] Starting Ollama...
-    start "" ollama serve
-    timeout /t 3 /nobreak >nul
-) else (
-    echo [1/3] Ollama already running.
+    echo       Installing Python packages...
+    py -m pip install mediapipe opencv-python websockets numpy --quiet
 )
 
-:: Start MCP server
-echo [2/3] Starting MCP course server...
+:: 2. Start Driver State Detection (camera + fatigue/gaze tracking)
+echo [2/4] Starting Driver State Detection server (port 8000)...
+start "Lumi Driver State" cmd /k "cd Driver-State-Detection\driver_state_detection && py main.py --debug"
+timeout /t 2 /nobreak >nul
+
+:: 3. Start MCP server (PDF syllabus search)
+echo [3/4] Starting MCP course server (port 3001)...
 start "Lumi MCP Server" cmd /k "cd mcp-server && node index.js"
 timeout /t 2 /nobreak >nul
 
-:: Start Lumi
-echo [3/3] Starting Lumi app...
+:: 4. Start Lumi Electron app
+echo [4/4] Starting Lumi app...
 npm run dev
 
 echo.

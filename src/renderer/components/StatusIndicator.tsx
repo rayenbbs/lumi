@@ -15,7 +15,7 @@ export function MicIndicator({ status }: MicIndicatorProps) {
         animate={status === 'listening' ? { scale: [1, 1.3, 1] } : {}}
         transition={{ duration: 1.5, repeat: Infinity }}
       />
-      <span className="text-[10px] text-white/40 select-none">??</span>
+      <span className="text-[10px] text-white/40 select-none">MIC</span>
     </div>
   )
 }
@@ -40,7 +40,7 @@ export function OllamaIndicator({ status }: OllamaIndicatorProps) {
   return (
     <div className="flex items-center gap-1.5" title={titles[status]}>
       <div className={"w-2 h-2 rounded-full " + colors[status]} />
-      <span className="text-[10px] text-white/40 select-none">??</span>
+      <span className="text-[10px] text-white/40 select-none">AI</span>
     </div>
   )
 }

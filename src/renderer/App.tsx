@@ -44,6 +44,7 @@ export default function App() {
     isThinking, setIsThinking,
     showBionicReader, setShowBionicReader,
     showSessionSummary, setShowSessionSummary,
+    sttEnabled, setSttEnabled,
     micStatus, setMicStatus,
     ollamaStatus, setOllamaStatus,
     messages, addMessage, setMessages, clearMessages,
@@ -83,6 +84,7 @@ export default function App() {
   const latestDriverMetricsRef = useRef<DriverStateMetrics | null>(null)
   const latestWindowRef = useRef<any>(null)
   const lastOCRRef = useRef('')
+  const handleUserSpeechRef = useRef<(transcript: string) => void>(() => {})
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -169,7 +171,9 @@ export default function App() {
       const speech = new SpeechService()
       const speechOk = speech.initialize()
       if (speechOk) {
-        speech.setTranscriptCallback(handleUserSpeech)
+        speech.setTranscriptCallback((transcript: string) => {
+          handleUserSpeechRef.current(transcript)
+        })
       }
       speechServiceRef.current = speech
 
@@ -202,8 +206,8 @@ export default function App() {
     setLumiState('watching')
     startEngineSessionOnce()
 
-    // Start mic
-    if (speechServiceRef.current) {
+    // Start mic only if STT is enabled
+    if (sttEnabled && speechServiceRef.current) {
       speechServiceRef.current.startListening()
       setMicStatus('listening')
     }
@@ -356,10 +360,7 @@ export default function App() {
   }, [addMessage, setIsThinking, setLumiState])
 
   // ─── HANDLE USER SPEECH / TEXT INPUT ─────────────────────────────────────
-  const handleUserSpeech = useCallback(async (transcript: string) => {
-    if (transcript.length < 3) return
-    await sendUserMessage(transcript)
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // (defined after sendUserMessage below, wired via ref)
 
   const sendUserMessage = useCallback(async (text: string) => {
     const userMsg: ChatMessage = {
@@ -423,6 +424,23 @@ export default function App() {
       setIsSpeaking(false)
     }
   }, [addMessage, setIsExpanded, setIsThinking, setLumiState])
+
+  // Keep speech ref in sync so the callback always calls the latest sendUserMessage
+  useEffect(() => {
+    handleUserSpeechRef.current = (transcript: string) => {
+      if (transcript.length < 3) return
+
+      // Filter out garbage/noise — only send if it has real words
+      const wordCount = transcript.split(/\s+/).filter(w => w.length > 1).length
+      if (wordCount < 1) {
+        console.log('[SPEECH] Filtered out noise:', transcript)
+        return
+      }
+
+      console.log('[SPEECH] Transcript received, sending to LLM:', transcript)
+      sendUserMessage(transcript)
+    }
+  }, [sendUserMessage])
 
   // ─── TEXT INPUT SUBMIT ────────────────────────────────────────────────────
   const handleInputSubmit = useCallback((e: React.FormEvent) => {
@@ -583,6 +601,26 @@ export default function App() {
               <div className="flex items-center gap-2.5">
                 <OllamaIndicator status={ollamaStatus} />
                 <MicIndicator status={micStatus} />
+                <button
+                  onClick={() => {
+                    const next = !sttEnabled
+                    setSttEnabled(next)
+                    if (next && speechServiceRef.current && lumiState !== 'sleeping') {
+                      speechServiceRef.current.startListening()
+                      setMicStatus('listening')
+                    } else if (!next && speechServiceRef.current) {
+                      speechServiceRef.current.stopListening()
+                      setMicStatus('off')
+                    }
+                  }}
+                  className={`cursor-pointer text-[10px] px-1.5 py-0.5 rounded transition-all ${
+                    sttEnabled
+                      ? 'bg-purple-500/25 text-purple-300 border border-purple-400/30'
+                      : 'lumi-btn'
+                  }`}
+                >
+                  STT
+                </button>
               </div>
               <div className="flex items-center gap-1.5">
                 <button

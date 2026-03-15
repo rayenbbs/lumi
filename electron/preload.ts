@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     syllabusContext?: string
   }) => ipcRenderer.invoke('send-to-gemini', payload),
 
+  // Speech-to-text (Deepgram)
+  transcribeAudio: async (blob: Blob) => {
+    const arrayBuffer = await blob.arrayBuffer()
+    return ipcRenderer.invoke('transcribe-audio', new Uint8Array(arrayBuffer)) as Promise<{ transcript: string }>
+  },
+
   // MCP syllabus search
   searchSyllabus: (query: string) => ipcRenderer.invoke('search-syllabus', query),
 

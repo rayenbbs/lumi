@@ -21,6 +21,7 @@
     "react-dom": "^18.2.0",
     "tesseract.js": "^5.0.0",
     "webgazer": "^3.5.3",
+    "ws": "^8.19.0",
     "zustand": "^4.5.0"
   },
   "devDependencies": {

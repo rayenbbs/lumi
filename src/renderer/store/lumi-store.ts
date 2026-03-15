@@ -28,6 +28,9 @@ interface LumiStore {
   setShowSessionSummary: (v: boolean) => void
 
   // Status
+  sttEnabled: boolean
+  setSttEnabled: (v: boolean) => void
+
   micStatus: 'off' | 'listening'
   setMicStatus: (s: 'off' | 'listening') => void
 
@@ -64,6 +67,9 @@ export const useLumiStore = create<LumiStore>((set) => ({
 
   showSessionSummary: false,
   setShowSessionSummary: (showSessionSummary) => set({ showSessionSummary }),
+
+  sttEnabled: false,
+  setSttEnabled: (sttEnabled) => set({ sttEnabled }),
 
   micStatus: 'off',
   setMicStatus: (micStatus) => set({ micStatus }),

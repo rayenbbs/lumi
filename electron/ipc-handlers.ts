@@ -109,6 +109,43 @@ export function registerIpcHandlers(win: BrowserWindow) {
     }
   })
 
+  // === SPEECH-TO-TEXT (Deepgram — free $200 credit) ===
+  const DEEPGRAM_API_KEY = process.env.DEEPGRAM_API_KEY || ''
+
+  ipcMain.handle('transcribe-audio', async (_event, audioData: Uint8Array) => {
+    if (!DEEPGRAM_API_KEY) {
+      console.warn('[STT] DEEPGRAM_API_KEY not set in .env')
+      return { transcript: '' }
+    }
+    try {
+      const body = Buffer.from(audioData)
+      const response = await fetch(
+        'https://api.deepgram.com/v1/listen?model=nova-2&smart_format=true&language=en',
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Token ${DEEPGRAM_API_KEY}`,
+            'Content-Type': 'audio/wav',
+          },
+          body,
+        }
+      )
+      const data = await response.json()
+
+      if (data.err_code) {
+        console.error('[STT] Deepgram error:', data.err_msg)
+        return { transcript: '' }
+      }
+
+      const transcript = data.results?.channels?.[0]?.alternatives?.[0]?.transcript?.trim() || ''
+      if (transcript) console.log('[STT] Deepgram:', transcript)
+      return { transcript }
+    } catch (err) {
+      console.error('[STT] Deepgram failed:', err)
+      return { transcript: '' }
+    }
+  })
+
   // === GEMINI BRIDGE ===
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY || ''
   const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemma-3-27b-it:generateContent?key=${GEMINI_API_KEY}`

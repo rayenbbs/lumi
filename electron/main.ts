@@ -108,9 +108,7 @@ app.whenReady().then(() => {
 })
 
 app.on('will-quit', () => {
-  if (pythonProcess) {
-    pythonProcess.kill()
-  }
+  if (pythonProcess) pythonProcess.kill()
 })
 
 app.on('window-all-closed', () => {
