@@ -1,10 +1,366 @@
 import { ipcMain, BrowserWindow, desktopCapturer, screen } from 'electron'
 import { mainWindow } from './main'
 import Store from 'electron-store'
+import path from 'path'
+import { createHash } from 'crypto'
+import mammoth from 'mammoth'
+import { createWorker, Worker } from 'tesseract.js'
+import {
+  createCanvas,
+  DOMMatrix as CanvasDOMMatrix,
+  ImageData as CanvasImageData,
+  Path2D as CanvasPath2D,
+} from '@napi-rs/canvas'
 
 let dropZoneWindow: BrowserWindow | null = null
 
 let activeWinModule: any = null
+
+const MAX_ATTACHMENT_TEXT = 12000
+let attachmentOCRWorker: Worker | null = null
+const PDF_TEXT_MAX_PAGES = 20
+const PDF_OCR_MAX_PAGES = 8
+const ATTACHMENT_CACHE_MAX_ITEMS = 120
+let pdfRuntimePrepared = false
+
+type CachedAttachmentValue = Omit<ProcessedAttachmentPayload, 'id'>
+const attachmentProcessingCache = new Map<string, CachedAttachmentValue>()
+
+interface AttachmentPayload {
+  id: string
+  name: string
+  size: number
+  type: string
+  dataUrl: string
+}
+
+interface ProcessedAttachmentPayload {
+  id: string
+  name: string
+  size: number
+  type: string
+  previewText?: string
+  extractedText?: string
+  unsupported?: boolean
+}
+
+function dataUrlToBuffer(dataUrl: string): Buffer {
+  const commaIndex = dataUrl.indexOf(',')
+  if (commaIndex < 0) {
+    throw new Error('Invalid data URL')
+  }
+  const base64 = dataUrl.slice(commaIndex + 1)
+  return Buffer.from(base64, 'base64')
+}
+
+function computeAttachmentCacheKey(attachment: AttachmentPayload, buffer: Buffer): string {
+  const hash = createHash('sha1').update(buffer).digest('hex')
+  const ext = path.extname(attachment.name).toLowerCase()
+  return `${attachment.type}|${ext}|${buffer.length}|${hash}`
+}
+
+function getCachedAttachment(cacheKey: string): CachedAttachmentValue | null {
+  const cached = attachmentProcessingCache.get(cacheKey)
+  if (!cached) return null
+
+  // Touch for simple LRU behavior
+  attachmentProcessingCache.delete(cacheKey)
+  attachmentProcessingCache.set(cacheKey, cached)
+  return cached
+}
+
+function setCachedAttachment(cacheKey: string, value: CachedAttachmentValue): void {
+  if (attachmentProcessingCache.has(cacheKey)) {
+    attachmentProcessingCache.delete(cacheKey)
+  }
+  attachmentProcessingCache.set(cacheKey, value)
+
+  if (attachmentProcessingCache.size > ATTACHMENT_CACHE_MAX_ITEMS) {
+    const oldestKey = attachmentProcessingCache.keys().next().value
+    if (oldestKey) attachmentProcessingCache.delete(oldestKey)
+  }
+}
+
+function ensurePdfRuntimePolyfills(): void {
+  if (pdfRuntimePrepared) return
+
+  const g = globalThis as any
+  if (!g.DOMMatrix) g.DOMMatrix = CanvasDOMMatrix
+  if (!g.ImageData) g.ImageData = CanvasImageData
+  if (!g.Path2D) g.Path2D = CanvasPath2D
+  pdfRuntimePrepared = true
+}
+
+function normalizeText(raw: string): string {
+  return raw.replace(/\0/g, '').replace(/\r\n/g, '\n').trim()
+}
+
+function buildPreview(raw: string): string {
+  return raw.slice(0, 180).replace(/\s+/g, ' ').trim() || '(empty content)'
+}
+
+function isPlainTextLike(fileName: string, mimeType: string): boolean {
+  if (mimeType.startsWith('text/')) return true
+  const ext = path.extname(fileName).toLowerCase()
+  return [
+    '.md', '.markdown', '.txt', '.json', '.csv', '.log', '.xml', '.yml', '.yaml',
+    '.ts', '.tsx', '.js', '.jsx', '.py', '.java', '.c', '.cpp', '.cs', '.html', '.css',
+  ].includes(ext)
+}
+
+function isImageLike(fileName: string, mimeType: string): boolean {
+  if (mimeType.startsWith('image/')) return true
+  const ext = path.extname(fileName).toLowerCase()
+  return ['.png', '.jpg', '.jpeg', '.bmp', '.gif', '.webp', '.tif', '.tiff'].includes(ext)
+}
+
+async function getAttachmentOCRWorker(): Promise<Worker> {
+  if (!attachmentOCRWorker) {
+    attachmentOCRWorker = await createWorker('eng', 1, {
+      logger: () => {},
+    })
+  }
+  return attachmentOCRWorker
+}
+
+async function extractTextFromImageBuffer(buffer: Buffer): Promise<string> {
+  try {
+    const worker = await getAttachmentOCRWorker()
+    const { data } = await worker.recognize(buffer)
+    return normalizeText(data?.text || '').slice(0, MAX_ATTACHMENT_TEXT)
+  } catch (err: any) {
+    console.warn('[IPC] image OCR failed:', err?.message || err)
+    return ''
+  }
+}
+
+class NodeCanvasFactory {
+  create(width: number, height: number): any {
+    const canvas = createCanvas(width, height)
+    const context = canvas.getContext('2d')
+    return { canvas, context }
+  }
+
+  reset(canvasAndContext: any, width: number, height: number): void {
+    canvasAndContext.canvas.width = width
+    canvasAndContext.canvas.height = height
+  }
+
+  destroy(canvasAndContext: any): void {
+    canvasAndContext.canvas.width = 0
+    canvasAndContext.canvas.height = 0
+  }
+}
+
+async function extractTextFromScannedPdf(buffer: Buffer): Promise<string> {
+  try {
+    ensurePdfRuntimePolyfills()
+    const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer) })
+    const pdfDoc = await loadingTask.promise
+
+    const pageCount = Math.min(pdfDoc.numPages || 0, PDF_OCR_MAX_PAGES)
+    if (pageCount === 0) return ''
+
+    const canvasFactory = new NodeCanvasFactory()
+    let mergedText = ''
+
+    for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum)
+      const viewport = page.getViewport({ scale: 2.0 })
+      const canvasAndContext = canvasFactory.create(Math.ceil(viewport.width), Math.ceil(viewport.height))
+
+      await page.render({
+        canvasContext: canvasAndContext.context,
+        viewport,
+        canvasFactory,
+      }).promise
+
+      const pngBuffer = canvasAndContext.canvas.toBuffer('image/png')
+      canvasFactory.destroy(canvasAndContext)
+
+      const pageText = await extractTextFromImageBuffer(pngBuffer)
+      if (pageText) {
+        mergedText += `\n\n[Page ${pageNum}]\n${pageText}`
+      }
+
+      if (mergedText.length >= MAX_ATTACHMENT_TEXT) break
+    }
+
+    await loadingTask.destroy()
+    return normalizeText(mergedText).slice(0, MAX_ATTACHMENT_TEXT)
+  } catch (err: any) {
+    console.warn('[IPC] scanned PDF OCR failed:', err?.message || err)
+    return ''
+  }
+}
+
+async function extractTextFromPdfTextLayer(buffer: Buffer): Promise<string> {
+  try {
+    ensurePdfRuntimePolyfills()
+    const pdfjs: any = await import('pdfjs-dist/legacy/build/pdf.mjs')
+    const loadingTask = pdfjs.getDocument({ data: new Uint8Array(buffer) })
+    const pdfDoc = await loadingTask.promise
+
+    const pageCount = Math.min(pdfDoc.numPages || 0, PDF_TEXT_MAX_PAGES)
+    if (pageCount === 0) return ''
+
+    let mergedText = ''
+
+    for (let pageNum = 1; pageNum <= pageCount; pageNum++) {
+      const page = await pdfDoc.getPage(pageNum)
+      const content = await page.getTextContent()
+      const pageText = normalizeText(
+        (content.items || [])
+          .map((item: any) => (typeof item?.str === 'string' ? item.str : ''))
+          .join(' ')
+      )
+
+      if (pageText) {
+        mergedText += `\n\n[Page ${pageNum}]\n${pageText}`
+      }
+
+      if (mergedText.length >= MAX_ATTACHMENT_TEXT) break
+    }
+
+    await loadingTask.destroy()
+    return normalizeText(mergedText).slice(0, MAX_ATTACHMENT_TEXT)
+  } catch (err: any) {
+    console.warn('[IPC] PDF text-layer extraction failed:', err?.message || err)
+    return ''
+  }
+}
+
+async function processAttachment(attachment: AttachmentPayload): Promise<ProcessedAttachmentPayload> {
+  const base: ProcessedAttachmentPayload = {
+    id: attachment.id,
+    name: attachment.name,
+    size: attachment.size,
+    type: attachment.type,
+  }
+
+  try {
+    const ext = path.extname(attachment.name).toLowerCase()
+    const mime = (attachment.type || '').toLowerCase()
+    const isPdf = ext === '.pdf' || mime === 'application/pdf'
+    const isImage = isImageLike(attachment.name, mime)
+    const buffer = dataUrlToBuffer(attachment.dataUrl)
+    const cacheKey = computeAttachmentCacheKey(attachment, buffer)
+    const cached = getCachedAttachment(cacheKey)
+    if (cached) {
+      return {
+        id: attachment.id,
+        ...cached,
+      }
+    }
+
+    const cacheIfEligible = (extracted: ProcessedAttachmentPayload) => {
+      // Avoid sticky-failing cache for OCR-driven paths (PDF/image) when unsupported.
+      const shouldCacheUnsupported = !isPdf && !isImage
+      if (extracted.unsupported && !shouldCacheUnsupported) return
+
+      setCachedAttachment(cacheKey, {
+        name: extracted.name,
+        size: extracted.size,
+        type: extracted.type,
+        extractedText: extracted.extractedText,
+        previewText: extracted.previewText,
+        unsupported: extracted.unsupported,
+      })
+    }
+
+    if (isPdf) {
+      const normalized = await extractTextFromPdfTextLayer(buffer)
+      if (normalized.length === 0) {
+        const ocrText = await extractTextFromScannedPdf(buffer)
+        if (ocrText.length > 0) {
+          const extracted: ProcessedAttachmentPayload = {
+            ...base,
+            extractedText: ocrText,
+            previewText: buildPreview(ocrText),
+            unsupported: false,
+          }
+          cacheIfEligible(extracted)
+          return extracted
+        }
+        const extracted: ProcessedAttachmentPayload = {
+          ...base,
+          unsupported: true,
+          previewText: 'No selectable text found in PDF (possibly scanned/image-only PDF)',
+        }
+        cacheIfEligible(extracted)
+        return extracted
+      }
+      const extracted: ProcessedAttachmentPayload = {
+        ...base,
+        extractedText: normalized,
+        previewText: buildPreview(normalized),
+        unsupported: false,
+      }
+      cacheIfEligible(extracted)
+      return extracted
+    }
+
+    if (ext === '.docx' || mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      const result = await mammoth.extractRawText({ buffer })
+      const normalized = normalizeText(result.value || '').slice(0, MAX_ATTACHMENT_TEXT)
+      const extracted: ProcessedAttachmentPayload = {
+        ...base,
+        extractedText: normalized,
+        previewText: buildPreview(normalized),
+        unsupported: normalized.length === 0,
+      }
+      cacheIfEligible(extracted)
+      return extracted
+    }
+
+    if (isImage) {
+      const normalized = await extractTextFromImageBuffer(buffer)
+      if (normalized.length === 0) {
+        const extracted: ProcessedAttachmentPayload = {
+          ...base,
+          unsupported: true,
+          previewText: 'Image added, but OCR could not extract readable text',
+        }
+        cacheIfEligible(extracted)
+        return extracted
+      }
+      const extracted: ProcessedAttachmentPayload = {
+        ...base,
+        extractedText: normalized,
+        previewText: buildPreview(normalized),
+        unsupported: false,
+      }
+      cacheIfEligible(extracted)
+      return extracted
+    }
+
+    if (isPlainTextLike(attachment.name, mime)) {
+      const normalized = normalizeText(buffer.toString('utf8')).slice(0, MAX_ATTACHMENT_TEXT)
+      const extracted: ProcessedAttachmentPayload = {
+        ...base,
+        extractedText: normalized,
+        previewText: buildPreview(normalized),
+        unsupported: normalized.length === 0,
+      }
+      cacheIfEligible(extracted)
+      return extracted
+    }
+
+    return {
+      ...base,
+      unsupported: true,
+      previewText: 'Unsupported file type for content extraction',
+    }
+  } catch (err: any) {
+    console.warn('[IPC] processAttachment failed:', attachment.name, err?.message || err)
+    return {
+      ...base,
+      unsupported: true,
+      previewText: 'Could not process file',
+    }
+  }
+}
 
 // active-win is ESM-only, must be dynamically imported
 async function getActiveWin() {
@@ -276,6 +632,21 @@ export function registerIpcHandlers(win: BrowserWindow) {
     } catch {
       // MCP server not running — return empty, app continues without it
       return []
+    }
+  })
+
+  // === ATTACHMENT PROCESSING ===
+  ipcMain.handle('process-attachments', async (_event, attachments: AttachmentPayload[]) => {
+    try {
+      if (!Array.isArray(attachments) || attachments.length === 0) {
+        return { success: true, attachments: [] }
+      }
+
+      const processed = await Promise.all(attachments.map((attachment) => processAttachment(attachment)))
+      return { success: true, attachments: processed }
+    } catch (err: any) {
+      console.error('[IPC] process-attachments failed:', err?.message || err)
+      return { success: false, attachments: [], error: 'Attachment processing failed' }
     }
   })
 

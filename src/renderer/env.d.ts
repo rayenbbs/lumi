@@ -37,6 +37,19 @@ interface Window {
       conversationHistory: Array<{ role: string; content: string }>
       syllabusContext?: string
     }) => Promise<{ success: boolean; message: string }>
+    processAttachments: (attachments: Array<{ id: string; name: string; size: number; type: string; dataUrl: string }>) => Promise<{
+      success: boolean
+      attachments: Array<{
+        id: string
+        name: string
+        size: number
+        type: string
+        previewText?: string
+        extractedText?: string
+        unsupported?: boolean
+      }>
+      error?: string
+    }>
     searchSyllabus: (query: string) => Promise<any[]>
     setClickThrough: (enable: boolean) => Promise<void>
     resizeWindow: (w: number, h: number) => Promise<void>

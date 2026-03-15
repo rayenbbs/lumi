@@ -55,6 +55,30 @@ export const DISTRACTION_PATTERNS = {
   studyPatterns: /\.pdf|lecture|chapter|course|study|docs|notes|textbook|homework|assignment|exam|quiz|tutorial/i,
 }
 
+export interface CustomDistractionPatterns {
+  apps: string[]
+  urls: string[]
+}
+
+let CUSTOM_DISTRACTION_PATTERNS: CustomDistractionPatterns = {
+  apps: [],
+  urls: [],
+}
+
+export function setCustomDistractionPatterns(patterns: CustomDistractionPatterns) {
+  CUSTOM_DISTRACTION_PATTERNS = {
+    apps: (patterns.apps || []).map((v) => v.toLowerCase().trim()).filter(Boolean),
+    urls: (patterns.urls || []).map((v) => v.toLowerCase().trim()).filter(Boolean),
+  }
+}
+
+export function getCustomDistractionPatterns(): CustomDistractionPatterns {
+  return {
+    apps: [...CUSTOM_DISTRACTION_PATTERNS.apps],
+    urls: [...CUSTOM_DISTRACTION_PATTERNS.urls],
+  }
+}
+
 export function isDistractingWindow(win: {
   title: string
   owner: string
@@ -62,9 +86,11 @@ export function isDistractingWindow(win: {
 }): boolean {
   const ownerLower = win.owner.toLowerCase()
   const titleLower = win.title.toLowerCase()
+  const allApps = [...DISTRACTION_PATTERNS.apps, ...CUSTOM_DISTRACTION_PATTERNS.apps]
+  const allUrls = [...DISTRACTION_PATTERNS.urls, ...CUSTOM_DISTRACTION_PATTERNS.urls]
 
   // Check app name
-  for (const app of DISTRACTION_PATTERNS.apps) {
+  for (const app of allApps) {
     if (ownerLower.includes(app)) return true
   }
 
@@ -75,7 +101,7 @@ export function isDistractingWindow(win: {
     for (const pattern of DISTRACTION_PATTERNS.allowlist) {
       if (pattern.test(urlOrTitle)) return false
     }
-    for (const domain of DISTRACTION_PATTERNS.urls) {
+    for (const domain of allUrls) {
       if (urlOrTitle.toLowerCase().includes(domain)) return true
     }
   }

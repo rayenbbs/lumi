@@ -7,13 +7,42 @@ import { OCRService } from './services/ocr-service'
 import { SpeechService } from './services/speech-service'
 import { SessionTracker } from './services/session-tracker'
 import { TriggerEngine, TriggerEvent } from './engine/trigger-engine'
-import { useLumiStore, ChatMessage } from './store/lumi-store'
+import { useLumiStore, ChatMessage, ChatAttachment } from './store/lumi-store'
 import LumiCharacter from './components/LumiCharacter'
 import ChatBubble from './components/ChatBubble'
 import { MicIndicator, OllamaIndicator } from './components/StatusIndicator'
 import BionicReader from './components/BionicReader'
 import SessionSummary from './components/SessionSummary'
+import CalibrationOverlay from './components/CalibrationOverlay'
+import PlatformPanel from './components/PlatformPanel'
+import MissionSprintBoard from './components/MissionSprintBoard'
+import SessionTimelinePanel, { TimelineEvent } from './components/SessionTimelinePanel'
 import { CONFIG } from './config/constants'
+import { SessionStats } from './services/session-tracker'
+import { setCustomDistractionPatterns } from './config/distractions'
+
+type SideTab = 'platform' | 'chat' | 'session'
+
+interface PendingAttachment extends ChatAttachment {
+  extractedText?: string
+  unsupported?: boolean
+}
+
+interface BackendAttachmentResult {
+  id: string
+  name: string
+  size: number
+  type: string
+  previewText?: string
+  extractedText?: string
+  unsupported?: boolean
+}
+
+const TAB_META: Record<SideTab, { label: string; icon: string }> = {
+  platform: { label: 'Platform', icon: '🧠' },
+  chat: { label: 'Chat', icon: '💬' },
+  session: { label: 'Session', icon: '📈' },
+}
 
 declare global {
   interface Window {
@@ -28,6 +57,11 @@ declare global {
         conversationHistory: Array<{ role: string; content: string }>
         syllabusContext?: string
       }) => Promise<{ success: boolean; message: string }>
+      processAttachments: (attachments: Array<{ id: string; name: string; size: number; type: string; dataUrl: string }>) => Promise<{
+        success: boolean
+        attachments: BackendAttachmentResult[]
+        error?: string
+      }>
       searchSyllabus: (query: string) => Promise<any[]>
       setClickThrough: (enable: boolean) => Promise<void>
       resizeWindow: (w: number, h: number) => Promise<void>
@@ -52,11 +86,26 @@ export default function App() {
     setSessionStartTime,
   } = useLumiStore()
 
-  const [sessionStats, setSessionStats] = useState<any>(null)
+  const [sessionStats, setSessionStats] = useState<SessionStats | null>(null)
+  const [liveSessionStats, setLiveSessionStats] = useState<SessionStats | null>(null)
   const [focusScore, setFocusScore] = useState(0)
   const [inputText, setInputText] = useState('')
   const [isSpeaking, setIsSpeaking] = useState(false)
+  const [activeTab, setActiveTab] = useState<SideTab>('platform')
+  const [timelineEvents, setTimelineEvents] = useState<TimelineEvent[]>([])
+  const [mission, setMission] = useState('Finish one topic deeply, then self-test with a 3-question quiz')
+  const [missionCompleted, setMissionCompleted] = useState(false)
+  const [doneStreak, setDoneStreak] = useState(0)
+  const [focusSessionsCount, setFocusSessionsCount] = useState(0)
+  const [sprintCompletedCount, setSprintCompletedCount] = useState(0)
+  const [customDistractingApps, setCustomDistractingApps] = useState<string[]>([])
+  const [customDistractingUrls, setCustomDistractingUrls] = useState<string[]>([])
+  const [sprintMinutes, setSprintMinutes] = useState(25)
+  const [sprintSecondsLeft, setSprintSecondsLeft] = useState(25 * 60)
+  const [isSprintRunning, setIsSprintRunning] = useState(false)
+  const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // Service refs (stable across renders)
   const engineRef = useRef(new TriggerEngine())
@@ -85,6 +134,78 @@ export default function App() {
   const latestWindowRef = useRef<any>(null)
   const lastOCRRef = useRef('')
   const handleUserSpeechRef = useRef<(transcript: string) => void>(() => {})
+
+  const pushTimelineEvent = useCallback((type: TimelineEvent['type'], text: string) => {
+    setTimelineEvents((prev) => [{ id: `evt-${Date.now()}-${Math.random()}`, type, text, timestamp: Date.now() }, ...prev].slice(0, 100))
+  }, [])
+
+  const fileToDataUrl = useCallback((file: File): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        if (typeof reader.result === 'string') resolve(reader.result)
+        else reject(new Error('Failed to read file'))
+      }
+      reader.onerror = () => reject(reader.error || new Error('Failed to read file'))
+      reader.readAsDataURL(file)
+    })
+  }, [])
+
+  const handleAddAttachments = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || [])
+    if (files.length === 0) return
+
+    const batch = await Promise.all(
+      files.map(async (file) => ({
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        dataUrl: await fileToDataUrl(file),
+      }))
+    )
+
+    let nextAttachments: PendingAttachment[] = []
+
+    try {
+      const response = await window.electronAPI?.processAttachments(batch)
+      if (response?.success && Array.isArray(response.attachments)) {
+        nextAttachments = response.attachments.map((file) => ({
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          previewText: file.previewText,
+          extractedText: file.extractedText,
+          unsupported: file.unsupported,
+        }))
+      }
+    } catch {
+      // no-op fallback below
+    }
+
+    if (nextAttachments.length === 0) {
+      // Fallback metadata-only mode when backend processing is unavailable
+      nextAttachments = batch.map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        unsupported: true,
+        previewText: 'Attachment added (content extraction unavailable)',
+      }))
+    }
+
+    setPendingAttachments((prev) => [...prev, ...nextAttachments])
+    pushTimelineEvent('platform_action', `Attached ${nextAttachments.length} file(s)`)
+
+    // Allow selecting the same file again later
+    e.target.value = ''
+  }, [fileToDataUrl, pushTimelineEvent])
+
+  const removePendingAttachment = useCallback((id: string) => {
+    setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
+  }, [])
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -125,6 +246,14 @@ export default function App() {
         if (typeof saved.focusScore === 'number') {
           setFocusScore(saved.focusScore)
         }
+        if (saved.platformState) {
+          if (typeof saved.platformState.mission === 'string') setMission(saved.platformState.mission)
+          if (typeof saved.platformState.doneStreak === 'number') setDoneStreak(saved.platformState.doneStreak)
+          if (typeof saved.platformState.focusSessionsCount === 'number') setFocusSessionsCount(saved.platformState.focusSessionsCount)
+          if (typeof saved.platformState.sprintCompletedCount === 'number') setSprintCompletedCount(saved.platformState.sprintCompletedCount)
+          if (Array.isArray(saved.platformState.customDistractingApps)) setCustomDistractingApps(saved.platformState.customDistractingApps)
+          if (Array.isArray(saved.platformState.customDistractingUrls)) setCustomDistractingUrls(saved.platformState.customDistractingUrls)
+        }
       } catch {
         // Ignore restore failures
       }
@@ -143,13 +272,42 @@ export default function App() {
           lastOCRText,
           sessionStats,
           focusScore,
+          platformState: {
+            mission,
+            doneStreak,
+            focusSessionsCount,
+            sprintCompletedCount,
+            customDistractingApps,
+            customDistractingUrls,
+          },
           savedAt: Date.now(),
         })
         .catch(() => {})
     }, 600)
 
     return () => clearTimeout(t)
-  }, [messages, lastOCRText, sessionStats, focusScore])
+  }, [messages, lastOCRText, sessionStats, focusScore, mission, doneStreak, focusSessionsCount, sprintCompletedCount, customDistractingApps, customDistractingUrls])
+
+  useEffect(() => {
+    setCustomDistractionPatterns({
+      apps: customDistractingApps,
+      urls: customDistractingUrls,
+    })
+  }, [customDistractingApps, customDistractingUrls])
+
+  useEffect(() => {
+    if (!isSprintRunning) return
+    if (sprintSecondsLeft <= 0) {
+      setIsSprintRunning(false)
+      setSprintCompletedCount((prev) => prev + 1)
+      pushTimelineEvent('platform_action', 'Sprint completed')
+      return
+    }
+    const timer = setInterval(() => {
+      setSprintSecondsLeft((prev) => Math.max(0, prev - 1))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [isSprintRunning, sprintSecondsLeft, pushTimelineEvent])
 
   // Mark AI as online (Gemini — no local server needed)
   useEffect(() => {
@@ -201,11 +359,18 @@ export default function App() {
     conversationHistoryRef.current = []
     engineSessionStartedRef.current = false
     sessionTrackerRef.current.start()
+    setLiveSessionStats(sessionTrackerRef.current.getStats())
+    setFocusSessionsCount((prev) => prev + 1)
+    setTimelineEvents([])
+    setActiveTab('platform')
+    setIsSprintRunning(false)
+    setSprintSecondsLeft(sprintMinutes * 60)
+    setMissionCompleted(false)
+    pushTimelineEvent('session_start', 'Session started')
     setSessionStartTime(Date.now())
 
     setLumiState('watching')
     startEngineSessionOnce()
-
     // Start mic only if STT is enabled
     if (sttEnabled && speechServiceRef.current) {
       speechServiceRef.current.startListening()
@@ -252,7 +417,6 @@ export default function App() {
       }
     }, CONFIG.OCR_INTERVAL)
 
-    // If calibration is shown, engine session starts on skip/complete
   }, [clearMessages, setMicStatus, setSessionStartTime, setLastOCRText, setLumiState, startEngineSessionOnce])
 
   // ─── STOP SESSION ─────────────────────────────────────────────────────────
@@ -263,9 +427,12 @@ export default function App() {
     sessionTrackerRef.current.end()
     engineRef.current.endSession(sessionTrackerRef.current.buildSummaryContext())
     const stats = sessionTrackerRef.current.getStats()
+    setLiveSessionStats(stats)
     const score = sessionTrackerRef.current.getFocusScore()
     setSessionStats(stats)
     setFocusScore(score)
+    setIsSprintRunning(false)
+    pushTimelineEvent('session_end', 'Session ended and summary generated')
     window.electronAPI?.saveSession({
       messages: messages.slice(-50),
       lastOCRText,
@@ -275,7 +442,7 @@ export default function App() {
     }).catch(() => {})
     setShowSessionSummary(true)
     setSessionStartTime(null)
-  }, [setMicStatus, setShowSessionSummary, setSessionStartTime, messages, lastOCRText])
+  }, [lastOCRText, messages, pushTimelineEvent, setMicStatus, setSessionStartTime, setShowSessionSummary])
 
   function stopAllLoops() {
     if (updateLoopRef.current) { clearInterval(updateLoopRef.current); updateLoopRef.current = null }
@@ -288,6 +455,8 @@ export default function App() {
     if (!event.type) return
 
     sessionTrackerRef.current.recordTrigger(event.type)
+    setLiveSessionStats(sessionTrackerRef.current.getStats())
+    pushTimelineEvent(event.type as Exclude<TimelineEvent['type'], 'question' | 'platform_action'>, `Trigger detected: ${event.type}`)
     setIsThinking(true)
     setLumiState('intervening')
 
@@ -357,21 +526,56 @@ export default function App() {
       engineRef.current.setState('watching')
       setLumiState('watching')
     }
-  }, [addMessage, setIsThinking, setLumiState])
+  }, [addMessage, pushTimelineEvent, setIsThinking, setLumiState])
 
   // ─── HANDLE USER SPEECH / TEXT INPUT ─────────────────────────────────────
-  // (defined after sendUserMessage below, wired via ref)
+    // (defined after sendUserMessage below, wired via ref)
 
-  const sendUserMessage = useCallback(async (text: string) => {
+  const handleUserSpeech = useCallback(async (transcript: string) => {
+    if (transcript.length < 3) return
+    await sendUserMessage(transcript)
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const sendUserMessage = useCallback(async (text: string, attachments: PendingAttachment[] = []) => {
+    const normalizedText = text.trim()
+    const attachmentSummary = attachments.length > 0
+      ? attachments.map((file) => file.name).join(', ')
+      : ''
+
+    const attachmentContextBlocks = attachments
+      .filter((file) => !file.unsupported && file.extractedText)
+      .map((file) => `File: ${file.name}\n${file.extractedText}`)
+
+    const attachmentPreviewBlocks = attachments
+      .filter((file) => !file.extractedText && file.previewText)
+      .map((file) => `File: ${file.name}\nStatus: ${file.previewText}`)
+
+    const attachmentContext = attachmentContextBlocks.length > 0 || attachmentPreviewBlocks.length > 0
+      ? `\n\nAttached file context:\n${[...attachmentContextBlocks, ...attachmentPreviewBlocks].join('\n\n---\n\n')}`
+      : attachments.length > 0
+      ? `\n\nAttached files (metadata only): ${attachmentSummary}`
+      : ''
+
+    const finalQuestion = normalizedText || (attachments.length > 0 ? 'Please analyze the attached file(s).' : '')
+    if (!finalQuestion) return
+
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
-      text,
+      text: normalizedText || `Shared ${attachments.length} attachment(s).`,
       timestamp: Date.now(),
+      attachments: attachments.map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        previewText: file.previewText,
+      })),
     }
 
     addMessage(userMsg)
-    conversationHistoryRef.current.push({ role: 'user', content: text })
+    pushTimelineEvent('question', `Question asked: ${finalQuestion.slice(0, 72)}${finalQuestion.length > 72 ? '...' : ''}`)
+    conversationHistoryRef.current.push({ role: 'user', content: finalQuestion + attachmentContext })
 
     setIsExpanded(true)
     setIsThinking(true)
@@ -379,7 +583,7 @@ export default function App() {
     try {
       // Search syllabus for context
       let syllabusContext = ''
-      const results = await window.electronAPI?.searchSyllabus(text) ?? []
+      const results = await window.electronAPI?.searchSyllabus(finalQuestion) ?? []
       if (results.length > 0) {
         syllabusContext = results.slice(0, 3).map((r: any) => r.text || r).join('\n\n')
       }
@@ -387,8 +591,8 @@ export default function App() {
       const response = await window.electronAPI?.sendToGemini({
         triggerType: 'question',
         ocrText: lastOCRRef.current,
-        userQuestion: text,
         driverState: latestDriverMetricsRef.current,
+        userQuestion: finalQuestion + attachmentContext,
         conversationHistory: conversationHistoryRef.current.slice(-CONFIG.CONVERSATION_CONTEXT_MESSAGES),
         syllabusContext,
       })
@@ -416,14 +620,15 @@ export default function App() {
       engineRef.current.setState('watching')
 
       // Extract topic for session tracking
-      const topic = text.split(' ').slice(0, 4).join(' ')
+      const topic = finalQuestion.split(' ').slice(0, 4).join(' ')
       sessionTrackerRef.current.recordTopic(topic)
+      setLiveSessionStats(sessionTrackerRef.current.getStats())
     } catch (err) {
       console.error('[UserMsg] Failed:', err)
       setIsThinking(false)
       setIsSpeaking(false)
     }
-  }, [addMessage, setIsExpanded, setIsThinking, setLumiState])
+  }, [addMessage, pushTimelineEvent, setIsExpanded, setIsThinking, setLumiState])
 
   // Keep speech ref in sync so the callback always calls the latest sendUserMessage
   useEffect(() => {
@@ -446,13 +651,78 @@ export default function App() {
   const handleInputSubmit = useCallback((e: React.FormEvent) => {
     e.preventDefault()
     const text = inputText.trim()
-    if (!text) return
+    const attachments = pendingAttachments
+    if (!text && attachments.length === 0) return
     setInputText('')
+    setPendingAttachments([])
     if (lumiState === 'sleeping') {
       startSession()
     }
-    sendUserMessage(text)
-  }, [inputText, lumiState, startSession, sendUserMessage])
+    sendUserMessage(text, attachments)
+  }, [inputText, pendingAttachments, lumiState, startSession, sendUserMessage])
+
+  const handlePlatformPrompt = useCallback((prompt: string) => {
+    if (!prompt.trim()) return
+    if (lumiState === 'sleeping') {
+      startSession()
+    }
+    setActiveTab('chat')
+    pushTimelineEvent('platform_action', `Platform action: ${prompt.slice(0, 60)}${prompt.length > 60 ? '...' : ''}`)
+    sendUserMessage(prompt)
+  }, [lumiState, pushTimelineEvent, startSession, sendUserMessage])
+
+  const handleSprintMinutesChange = useCallback((minutes: number) => {
+    setSprintMinutes(minutes)
+    setSprintSecondsLeft(minutes * 60)
+    setIsSprintRunning(false)
+  }, [])
+
+  const handleSprintStartPause = useCallback(() => {
+    setIsSprintRunning((prev) => !prev)
+  }, [])
+
+  const handleSprintReset = useCallback(() => {
+    setIsSprintRunning(false)
+    setSprintSecondsLeft(sprintMinutes * 60)
+    pushTimelineEvent('platform_action', 'Sprint reset')
+  }, [pushTimelineEvent, sprintMinutes])
+
+  const handleToggleMissionCompleted = useCallback(() => {
+    setMissionCompleted((prev) => {
+      const next = !prev
+      if (next) {
+        setDoneStreak((streak) => streak + 1)
+        pushTimelineEvent('platform_action', 'Mission marked complete')
+      }
+      return next
+    })
+  }, [pushTimelineEvent])
+
+  const addCustomDistractingApp = useCallback((value: string) => {
+    setCustomDistractingApps((prev) => (prev.includes(value) ? prev : [...prev, value]))
+    pushTimelineEvent('platform_action', `Added distracting app rule: ${value}`)
+  }, [pushTimelineEvent])
+
+  const removeCustomDistractingApp = useCallback((value: string) => {
+    setCustomDistractingApps((prev) => prev.filter((item) => item !== value))
+    pushTimelineEvent('platform_action', `Removed distracting app rule: ${value}`)
+  }, [pushTimelineEvent])
+
+  const addCustomDistractingUrl = useCallback((value: string) => {
+    setCustomDistractingUrls((prev) => (prev.includes(value) ? prev : [...prev, value]))
+    pushTimelineEvent('platform_action', `Added distracting site rule: ${value}`)
+  }, [pushTimelineEvent])
+
+  const removeCustomDistractingUrl = useCallback((value: string) => {
+    setCustomDistractingUrls((prev) => prev.filter((item) => item !== value))
+    pushTimelineEvent('platform_action', `Removed distracting site rule: ${value}`)
+  }, [pushTimelineEvent])
+
+  const outcomeSignals = [
+    { label: 'Focus sessions', value: `${focusSessionsCount} today` },
+    { label: 'Drifts recovered', value: `${liveSessionStats?.distractionCount ?? 0} redirects` },
+    { label: 'Sprints done', value: `${sprintCompletedCount}` },
+  ]
 
   // ─── MASCOT DRAG ────────────────────────────────────────────────────────
   const [mascotPos, setMascotPos] = useState<{ x: number; y: number } | null>(null)
@@ -648,42 +918,161 @@ export default function App() {
               </div>
             </div>
 
-            {/* Chat messages */}
-            <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-4 flex flex-col gap-2">
-              <div className="flex-1" />
-              {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
-                <ChatBubble key={msg.id} message={msg} />
-              ))}
-              {isThinking && (
-                <motion.div
-                  initial={{ opacity: 0, scale: 0.9 }}
-                  animate={{ opacity: 1, scale: 1 }}
-                  className="self-start glass-light rounded-2xl rounded-tl-sm px-4 py-2.5"
-                >
-                  <div className="flex gap-1 items-center">
-                    {[0, 1, 2].map((i) => (
-                      <motion.div
-                        key={i}
-                        className="w-1.5 h-1.5 bg-purple-400 rounded-full"
-                        animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
-                        transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
-                      />
-                    ))}
-                    <span className="text-white/50 text-xs ml-1">Lumi is thinking...</span>
-                  </div>
-                </motion.div>
-              )}
-              <div ref={messagesEndRef} />
+            {/* Tab strip */}
+            <div className="relative z-10 px-4 pb-2 shrink-0">
+              <div className="rounded-xl border border-white/10 bg-white/5 p-1 grid grid-cols-3 gap-1">
+                {(['platform', 'chat', 'session'] as SideTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    onClick={() => setActiveTab(tab)}
+                    className={`text-[11px] py-1.5 rounded-lg capitalize transition-colors ${
+                      activeTab === tab
+                        ? 'bg-cyan-500/20 border border-cyan-300/35 text-cyan-100'
+                        : 'text-white/60 hover:text-white/90 hover:bg-white/10 border border-transparent'
+                    }`}
+                  >
+                    <span className="mr-1">{TAB_META[tab].icon}</span>
+                    {TAB_META[tab].label}
+                  </button>
+                ))}
+              </div>
             </div>
 
-            {/* Chat input — always visible */}
+            {/* Tab content */}
+            <div className="relative z-10 flex-1 min-h-0 overflow-y-auto">
+              <AnimatePresence mode="wait" initial={false}>
+                {activeTab === 'platform' && (
+                  <motion.div
+                    key="tab-platform"
+                    initial={{ opacity: 0, x: 18 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -18 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                  >
+                    <PlatformPanel
+                      onPrompt={handlePlatformPrompt}
+                      outcomeSignals={outcomeSignals}
+                      customDistractingApps={customDistractingApps}
+                      customDistractingUrls={customDistractingUrls}
+                      onAddDistractingApp={addCustomDistractingApp}
+                      onRemoveDistractingApp={removeCustomDistractingApp}
+                      onAddDistractingUrl={addCustomDistractingUrl}
+                      onRemoveDistractingUrl={removeCustomDistractingUrl}
+                    />
+                    <MissionSprintBoard
+                      mission={mission}
+                      onMissionChange={setMission}
+                      missionCompleted={missionCompleted}
+                      onToggleMissionCompleted={handleToggleMissionCompleted}
+                      doneStreak={doneStreak}
+                      sprintMinutes={sprintMinutes}
+                      onSprintMinutesChange={handleSprintMinutesChange}
+                      sprintSecondsLeft={sprintSecondsLeft}
+                      isRunning={isSprintRunning}
+                      onStartPause={handleSprintStartPause}
+                      onReset={handleSprintReset}
+                    />
+                  </motion.div>
+                )}
+
+                {activeTab === 'chat' && (
+                  <motion.div
+                    key="tab-chat"
+                    initial={{ opacity: 0, x: 18 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -18 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                    className="px-4 flex flex-col gap-2 min-h-full"
+                  >
+                    <div className="flex-1" />
+                    {messages.slice(-CONFIG.CHAT_HISTORY_VISIBLE).map((msg) => (
+                      <ChatBubble key={msg.id} message={msg} />
+                    ))}
+                    {isThinking && (
+                      <motion.div
+                        initial={{ opacity: 0, scale: 0.9 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        className="self-start glass-light rounded-2xl rounded-tl-sm px-4 py-2.5"
+                      >
+                        <div className="flex gap-1 items-center">
+                          {[0, 1, 2].map((i) => (
+                            <motion.div
+                              key={i}
+                              className="w-1.5 h-1.5 bg-purple-400 rounded-full"
+                              animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                              transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                            />
+                          ))}
+                          <span className="text-white/50 text-xs ml-1">Lumi is thinking...</span>
+                        </div>
+                      </motion.div>
+                    )}
+                    <div ref={messagesEndRef} />
+                  </motion.div>
+                )}
+
+                {activeTab === 'session' && (
+                  <motion.div
+                    key="tab-session"
+                    initial={{ opacity: 0, x: 18 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -18 }}
+                    transition={{ duration: 0.2, ease: 'easeOut' }}
+                  >
+                    <SessionTimelinePanel
+                      timelineEvents={timelineEvents}
+                      liveStats={liveSessionStats}
+                      focusScore={focusScore}
+                    />
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+
+            {/* Chat input */}
             <div className="relative z-10 px-4 py-3 shrink-0">
+              {pendingAttachments.length > 0 && (
+                <div className="mb-2 flex flex-wrap gap-1.5">
+                  {pendingAttachments.map((file) => (
+                    <span key={file.id} className="inline-flex items-center gap-1 rounded-full bg-cyan-500/15 border border-cyan-300/30 px-2 py-0.5 text-[10px] text-cyan-100">
+                      📎 {file.name}
+                      {file.unsupported && <span className="text-amber-200">(meta)</span>}
+                      <button
+                        type="button"
+                        onClick={() => removePendingAttachment(file.id)}
+                        className="text-cyan-100/80 hover:text-white"
+                        title="Remove attachment"
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  ))}
+                </div>
+              )}
+
               <form onSubmit={handleInputSubmit} className="flex gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  multiple
+                  onChange={handleAddAttachments}
+                  className="hidden"
+                />
+
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="cursor-pointer glass rounded-xl px-3 py-2 text-cyan-300 hover:text-cyan-200 hover:bg-cyan-500/15 transition-all text-sm font-medium"
+                  title="Attach files"
+                >
+                  📎
+                </button>
+
                 <input
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder="Ask Lumi anything..."
+                  placeholder={activeTab === 'platform' ? 'Ask or run a platform action...' : 'Ask Lumi anything...'}
                   autoFocus
                   className="flex-1 select-text glass rounded-xl px-3 py-2 text-sm text-white placeholder-white/30 outline-none focus:border-purple-400/40 bg-transparent"
                 />

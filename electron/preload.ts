@@ -25,6 +25,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // MCP syllabus search
   searchSyllabus: (query: string) => ipcRenderer.invoke('search-syllabus', query),
 
+  // Attachment processing (main process parsing)
+  processAttachments: (attachments: Array<{ id: string; name: string; size: number; type: string; dataUrl: string }>) =>
+    ipcRenderer.invoke('process-attachments', attachments) as Promise<{
+      success: boolean
+      attachments: Array<{
+        id: string
+        name: string
+        size: number
+        type: string
+        previewText?: string
+        extractedText?: string
+        unsupported?: boolean
+      }>
+      error?: string
+    }>,
+
   // Window controls
   setClickThrough: (enable: boolean) =>
     ipcRenderer.invoke('set-click-through', enable),

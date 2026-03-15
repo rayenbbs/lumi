@@ -1,12 +1,21 @@
 import { create } from 'zustand'
 import { LumiState, TriggerType } from '../engine/trigger-engine'
 
+export interface ChatAttachment {
+  id: string
+  name: string
+  size: number
+  type: string
+  previewText?: string
+}
+
 export interface ChatMessage {
   id: string
   role: 'lumi' | 'user'
   text: string
   timestamp: number
   triggerType?: TriggerType
+  attachments?: ChatAttachment[]
 }
 
 interface LumiStore {

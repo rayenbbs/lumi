@@ -1,5 +1,8 @@
 // Timing thresholds (all in milliseconds unless noted)
 export const CONFIG = {
+  // Feature toggles
+  EYE_TRACKING_ENABLED: false,        // set true to enable WebGazer flow
+
   // Distraction detection
   DISTRACTION_GRACE_PERIOD: 5_000,     // 5s before flagging distraction
   DISTRACTION_COOLDOWN: 20_000,       // 10s between distraction nudges
@@ -18,7 +21,7 @@ export const CONFIG = {
   WANDERING_COOLDOWN: 120_000,         // 2min between wandering nudges
 
   // General
-  MIN_INTERVENTION_GAP: 20_000,        // 20s minimum between ANY interventions
+  MIN_INTERVENTION_GAP: 15_000,        // 20s minimum between ANY interventions
   SESSION_INACTIVITY_TIMEOUT: 300_000, // 5min no activity → session end
 
   // Update loops
