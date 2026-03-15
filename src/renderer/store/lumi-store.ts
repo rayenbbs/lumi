@@ -37,6 +37,9 @@ interface LumiStore {
   setShowSessionSummary: (v: boolean) => void
 
   // Status
+  ttsEnabled: boolean
+  setTtsEnabled: (v: boolean) => void
+
   sttEnabled: boolean
   setSttEnabled: (v: boolean) => void
 
@@ -76,6 +79,9 @@ export const useLumiStore = create<LumiStore>((set) => ({
 
   showSessionSummary: false,
   setShowSessionSummary: (showSessionSummary) => set({ showSessionSummary }),
+
+  ttsEnabled: true,
+  setTtsEnabled: (ttsEnabled) => set({ ttsEnabled }),
 
   sttEnabled: false,
   setSttEnabled: (sttEnabled) => set({ sttEnabled }),

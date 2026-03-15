@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { useState } from 'react'
+import { useState, useCallback, useRef } from 'react'
 
 interface KnowledgeSource {
   name: string
@@ -20,6 +20,7 @@ interface SettingsPanelProps {
   onSprintMinutesChange: (value: number) => void
   knowledgeSources: KnowledgeSource[]
   onAddKnowledgeFile: () => void
+  onAddKnowledgeFilesByPath: (filePaths: string[]) => void
   onRemoveKnowledgeFile: (fileName: string) => void
 }
 
@@ -37,10 +38,53 @@ export default function SettingsPanel({
   onSprintMinutesChange,
   knowledgeSources,
   onAddKnowledgeFile,
+  onAddKnowledgeFilesByPath,
   onRemoveKnowledgeFile,
 }: SettingsPanelProps) {
   const [appInput, setAppInput] = useState('')
   const [urlInput, setUrlInput] = useState('')
+  const [isDragOver, setIsDragOver] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  const handleDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current++
+    if (dragCounterRef.current === 1) {
+      setIsDragOver(true)
+    }
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current--
+    if (dragCounterRef.current === 0) {
+      setIsDragOver(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    dragCounterRef.current = 0
+    setIsDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    const pdfPaths = files
+      .filter((f) => f.name.toLowerCase().endsWith('.pdf'))
+      .map((f) => (window as any).electronAPI?.getPathForFile?.(f) || f.path)
+      .filter(Boolean)
+
+    if (pdfPaths.length > 0) {
+      onAddKnowledgeFilesByPath(pdfPaths)
+    }
+  }, [onAddKnowledgeFilesByPath])
 
   const handleAddApp = () => {
     const value = appInput.trim().toLowerCase()
@@ -92,15 +136,25 @@ export default function SettingsPanel({
             Add your course PDFs so Lumi can reference them when you're stuck
           </p>
 
-          <button
+          <div
+            onDragEnter={handleDragEnter}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
             onClick={onAddKnowledgeFile}
-            className="cursor-pointer w-full flex items-center justify-center gap-2 rounded-xl border border-dashed border-purple-400/25 bg-purple-500/[0.06] hover:bg-purple-500/[0.12] hover:border-purple-400/40 transition-all px-4 py-3.5"
+            className={`cursor-pointer w-full flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed transition-all px-4 py-5 ${
+              isDragOver
+                ? 'border-purple-400/60 bg-purple-500/20 scale-[1.02]'
+                : 'border-purple-400/25 bg-purple-500/[0.06] hover:bg-purple-500/[0.12] hover:border-purple-400/40'
+            }`}
           >
             <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
               <path d="M9 3v12M3 9h12" stroke="rgba(192,170,255,0.7)" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
-            <span className="text-[13px] text-purple-200/70">Add PDF files</span>
-          </button>
+            <span className="text-[13px] text-purple-200/70">
+              {isDragOver ? 'Drop PDF files here' : 'Drop PDFs here or click to browse'}
+            </span>
+          </div>
 
           {knowledgeSources.length > 0 && (
             <div className="space-y-1.5">

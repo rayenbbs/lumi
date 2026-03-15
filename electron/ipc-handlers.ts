@@ -552,14 +552,32 @@ export function registerIpcHandlers(win: BrowserWindow) {
 
   ipcMain.handle('list-knowledge-files', async () => {
     try {
+      // Always read the actual directory so every PDF shows up
+      const diskFiles = fs.existsSync(knowledgeDir)
+        ? fs.readdirSync(knowledgeDir).filter(f => f.toLowerCase().endsWith('.pdf'))
+        : []
+
+      // Try to get chunk counts from MCP index
+      let indexedMap = new Map<string, number>()
       const mcpClient = getMcpClientSync()
       if (mcpClient) {
-        return await mcpClient.callTool('list_sources')
+        try {
+          const result = await mcpClient.callTool('list_sources')
+          if (result?.sources) {
+            for (const s of result.sources) {
+              indexedMap.set(s.name, s.chunks)
+            }
+          }
+        } catch { /* use disk-only */ }
       }
-      // Fallback: read directory directly
-      if (!fs.existsSync(knowledgeDir)) return { sources: [] }
-      const files = fs.readdirSync(knowledgeDir).filter(f => f.endsWith('.pdf'))
-      return { sources: files.map(name => ({ name, chunks: 0 })) }
+
+      // Merge: every file on disk appears, with chunk count if indexed
+      const sources = diskFiles.map(name => ({
+        name,
+        chunks: indexedMap.get(name) || 0,
+      }))
+
+      return { sources }
     } catch {
       return { sources: [] }
     }
@@ -599,6 +617,38 @@ export function registerIpcHandlers(win: BrowserWindow) {
       return { added }
     } catch (err: any) {
       console.error('[Knowledge] add failed:', err?.message || err)
+      return { added: [], error: err?.message }
+    }
+  })
+
+  ipcMain.handle('add-knowledge-files-by-path', async (_event, filePaths: string[]) => {
+    try {
+      const pdfPaths = filePaths.filter((f) => f.toLowerCase().endsWith('.pdf'))
+      if (pdfPaths.length === 0) {
+        return { added: [], error: 'No PDF files provided' }
+      }
+
+      if (!fs.existsSync(knowledgeDir)) {
+        fs.mkdirSync(knowledgeDir, { recursive: true })
+      }
+
+      const added: string[] = []
+      for (const filePath of pdfPaths) {
+        const fileName = path.basename(filePath)
+        const dest = path.join(knowledgeDir, fileName)
+        fs.copyFileSync(filePath, dest)
+        added.push(fileName)
+        console.log('[Knowledge] Added via drop:', fileName)
+      }
+
+      const mcpClient = getMcpClientSync()
+      if (mcpClient) {
+        await mcpClient.reindex()
+      }
+
+      return { added }
+    } catch (err: any) {
+      console.error('[Knowledge] drop add failed:', err?.message || err)
       return { added: [], error: err?.message }
     }
   })

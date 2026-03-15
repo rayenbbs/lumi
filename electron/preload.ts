@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 
 contextBridge.exposeInMainWorld('electronAPI', {
   // Window monitoring
@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Knowledge base management
   listKnowledgeFiles: () => ipcRenderer.invoke('list-knowledge-files') as Promise<{ sources: Array<{ name: string; chunks: number }> }>,
   addKnowledgeFile: () => ipcRenderer.invoke('add-knowledge-file') as Promise<{ added: string[]; error?: string }>,
+  addKnowledgeFilesByPath: (filePaths: string[]) => ipcRenderer.invoke('add-knowledge-files-by-path', filePaths) as Promise<{ added: string[]; error?: string }>,
   removeKnowledgeFile: (fileName: string) => ipcRenderer.invoke('remove-knowledge-file', fileName) as Promise<{ removed: boolean; error?: string }>,
 
   // Attachment processing (main process parsing)
@@ -63,4 +64,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Drag & drop zone
   startDrag: (mouseX: number, mouseY: number) => ipcRenderer.invoke('start-drag', mouseX, mouseY),
   stopDrag: () => ipcRenderer.invoke('stop-drag') as Promise<{ closed: boolean }>,
+
+  // Utilities
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 })

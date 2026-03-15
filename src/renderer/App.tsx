@@ -66,11 +66,13 @@ declare global {
       searchSyllabus: (query: string) => Promise<any[]>
       listKnowledgeFiles: () => Promise<{ sources: Array<{ name: string; chunks: number }> }>
       addKnowledgeFile: () => Promise<{ added: string[]; error?: string }>
+      addKnowledgeFilesByPath: (filePaths: string[]) => Promise<{ added: string[]; error?: string }>
       removeKnowledgeFile: (fileName: string) => Promise<{ removed: boolean; error?: string }>
       setClickThrough: (enable: boolean) => Promise<void>
       resizeWindow: (w: number, h: number) => Promise<void>
       saveSession: (data: any) => Promise<boolean>
       loadSession: () => Promise<any>
+      getPathForFile: (file: File) => string
     }
   }
 }
@@ -81,6 +83,7 @@ export default function App() {
     isExpanded, setIsExpanded,
     isThinking, setIsThinking,
     showSessionSummary, setShowSessionSummary,
+    ttsEnabled, setTtsEnabled,
     sttEnabled, setSttEnabled,
     micStatus, setMicStatus,
     ollamaStatus, setOllamaStatus,
@@ -109,6 +112,8 @@ export default function App() {
   const [isSprintRunning, setIsSprintRunning] = useState(false)
   const [pendingAttachments, setPendingAttachments] = useState<PendingAttachment[]>([])
   const [knowledgeSources, setKnowledgeSources] = useState<Array<{ name: string; chunks: number }>>([])
+  const [chatDragOver, setChatDragOver] = useState(false)
+  const chatDragCounterRef = useRef(0)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -211,6 +216,82 @@ export default function App() {
   const removePendingAttachment = useCallback((id: string) => {
     setPendingAttachments((prev) => prev.filter((a) => a.id !== id))
   }, [])
+
+  const handleChatDragEnter = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    chatDragCounterRef.current++
+    if (chatDragCounterRef.current === 1) {
+      setChatDragOver(true)
+    }
+  }, [])
+
+  const handleChatDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+  }, [])
+
+  const handleChatDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    chatDragCounterRef.current--
+    if (chatDragCounterRef.current === 0) {
+      setChatDragOver(false)
+    }
+  }, [])
+
+  const handleChatDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    chatDragCounterRef.current = 0
+    setChatDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length === 0) return
+
+    const batch = await Promise.all(
+      files.map(async (file) => ({
+        id: `${file.name}-${file.size}-${Date.now()}-${Math.random()}`,
+        name: file.name,
+        size: file.size,
+        type: file.type || 'application/octet-stream',
+        dataUrl: await fileToDataUrl(file),
+      }))
+    )
+
+    let nextAttachments: PendingAttachment[] = []
+
+    try {
+      const response = await window.electronAPI?.processAttachments(batch)
+      if (response?.success && Array.isArray(response.attachments)) {
+        nextAttachments = response.attachments.map((file) => ({
+          id: file.id,
+          name: file.name,
+          size: file.size,
+          type: file.type,
+          previewText: file.previewText,
+          extractedText: file.extractedText,
+          unsupported: file.unsupported,
+        }))
+      }
+    } catch {
+      // fallback below
+    }
+
+    if (nextAttachments.length === 0) {
+      nextAttachments = batch.map((file) => ({
+        id: file.id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        unsupported: true,
+        previewText: 'Attachment added (content extraction unavailable)',
+      }))
+    }
+
+    setPendingAttachments((prev) => [...prev, ...nextAttachments])
+    pushTimelineEvent('platform_action', `Attached ${nextAttachments.length} file(s) via drag & drop`)
+  }, [fileToDataUrl, pushTimelineEvent])
 
   // Keep ref in sync with state
   useEffect(() => {
@@ -518,10 +599,12 @@ export default function App() {
       }
 
       // Speak — set chatting only during TTS
-      setLumiState('chatting')
-      setIsSpeaking(true)
-      await speechServiceRef.current?.speak(msg)
-      setIsSpeaking(false)
+      if (ttsEnabled) {
+        setLumiState('chatting')
+        setIsSpeaking(true)
+        await speechServiceRef.current?.speak(msg)
+        setIsSpeaking(false)
+      }
     } catch (err) {
       console.error('[Trigger] Failed:', err)
       setIsThinking(false)
@@ -617,10 +700,12 @@ export default function App() {
       setIsThinking(false)
 
       // TTS — chatting state only while speaking
-      setLumiState('chatting')
-      setIsSpeaking(true)
-      await speechServiceRef.current?.speak(msg)
-      setIsSpeaking(false)
+      if (ttsEnabled) {
+        setLumiState('chatting')
+        setIsSpeaking(true)
+        await speechServiceRef.current?.speak(msg)
+        setIsSpeaking(false)
+      }
       setLumiState('watching')
       engineRef.current.setState('watching')
 
@@ -738,10 +823,22 @@ export default function App() {
       const result = await window.electronAPI?.addKnowledgeFile()
       if (result?.added?.length) {
         pushTimelineEvent('platform_action', `Added ${result.added.length} study material(s)`)
-        await refreshKnowledgeSources()
       }
+      await refreshKnowledgeSources()
     } catch (err) {
       console.warn('[Knowledge] add failed:', err)
+    }
+  }, [pushTimelineEvent, refreshKnowledgeSources])
+
+  const handleAddKnowledgeFilesByPath = useCallback(async (filePaths: string[]) => {
+    try {
+      const result = await window.electronAPI?.addKnowledgeFilesByPath(filePaths)
+      if (result?.added?.length) {
+        pushTimelineEvent('platform_action', `Added ${result.added.length} study material(s) via drag & drop`)
+      }
+      await refreshKnowledgeSources()
+    } catch (err) {
+      console.warn('[Knowledge] drop add failed:', err)
     }
   }, [pushTimelineEvent, refreshKnowledgeSources])
 
@@ -897,9 +994,26 @@ export default function App() {
             className="absolute right-0 top-0 bottom-0 w-[380px] z-30 flex flex-col pointer-events-auto"
             onMouseEnter={handleMouseEnterUI}
             onMouseLeave={handleMouseLeaveUI}
+            onDragEnter={activeTab === 'chat' ? handleChatDragEnter : undefined}
+            onDragOver={activeTab === 'chat' ? handleChatDragOver : undefined}
+            onDragLeave={activeTab === 'chat' ? handleChatDragLeave : undefined}
+            onDrop={activeTab === 'chat' ? handleChatDrop : undefined}
           >
             {/* Panel background */}
             <div className="absolute inset-0 bg-[rgba(12,8,24,0.88)] backdrop-blur-2xl rounded-l-2xl border-l border-white/[0.06]" style={{ pointerEvents: 'none' }} />
+
+            {/* Drag & drop overlay for chat */}
+            {chatDragOver && activeTab === 'chat' && (
+              <div className="absolute inset-0 z-50 rounded-l-2xl bg-purple-500/15 border-2 border-dashed border-purple-400/50 flex items-center justify-center backdrop-blur-sm pointer-events-none">
+                <div className="flex flex-col items-center gap-2">
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none">
+                    <path d="M12 3v12M12 3l-4 4M12 3l4 4" stroke="rgba(192,170,255,0.8)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                    <path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" stroke="rgba(192,170,255,0.8)" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                  <span className="text-purple-200/90 text-[14px] font-medium">Drop files to attach</span>
+                </div>
+              </div>
+            )}
 
             {/* Settings Panel Overlay */}
             <AnimatePresence>
@@ -928,6 +1042,7 @@ export default function App() {
                   onSprintMinutesChange={handleSprintMinutesChange}
                   knowledgeSources={knowledgeSources}
                   onAddKnowledgeFile={handleAddKnowledgeFile}
+                  onAddKnowledgeFilesByPath={handleAddKnowledgeFilesByPath}
                   onRemoveKnowledgeFile={handleRemoveKnowledgeFile}
                 />
               )}
@@ -1133,6 +1248,31 @@ export default function App() {
                   className="cursor-pointer rounded-xl px-4 py-2.5 bg-purple-500/15 text-purple-300 hover:bg-purple-500/25 transition-all text-[14px] font-medium"
                 >
                   Send
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTtsEnabled(!ttsEnabled)}
+                  className={`cursor-pointer rounded-xl px-2.5 py-2.5 transition-all ${
+                    ttsEnabled
+                      ? 'text-purple-300 bg-purple-500/15 hover:bg-purple-500/25'
+                      : 'text-white/25 hover:text-white/50 hover:bg-white/[0.06]'
+                  }`}
+                  title={ttsEnabled ? 'Read aloud is on' : 'Read aloud is off'}
+                >
+                  {ttsEnabled ? (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <path d="M15.54 8.46a5 5 0 010 7.07" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      <path d="M19.07 4.93a10 10 0 010 14.14" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  ) : (
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+                      <path d="M11 5L6 9H2v6h4l5 4V5z" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <line x1="23" y1="9" x2="17" y2="15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                      <line x1="17" y1="9" x2="23" y2="15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+                    </svg>
+                  )}
                 </button>
               </form>
             </div>}
